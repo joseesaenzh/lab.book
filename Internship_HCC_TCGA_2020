@@ -1,0 +1,1550 @@
+###################
+###### TCGA #######
+###################
+
+getwd()
+file.choose()
+setwd("/Users/josesaenz/Documents/InternshipTMR/R/TCGA")
+
+## Install packages
+
+#install.packages("readxl")
+#install.packages("survminer")
+#install.packages("survival")
+#install.packages("tidyverse")
+#install.packages("UCSCXenaTools")
+#install.packages("dplyr")
+#install.packages("data.table")
+
+## Load packages
+
+library(survminer, quietly = TRUE)
+library(survival, quietly = TRUE)
+library(tidyverse, quietly = TRUE)
+library(UCSCXenaTools, quietly = TRUE)
+library(dplyr, quietly = TRUE)
+library(readxl, quietly = TRUE)
+library(data.table, quietly = TRUE)
+library(ggplot2, quietly = TRUE)
+
+## Describe PCAWG datasets 
+
+xetcga = XenaGenerate(subset = XenaHostNames == "tcgaHub")
+#hosts(xetcga)
+#cohorts(xetcga)
+#datasets(xetcga)
+
+### Review and download datasets ###
+
+## Scan datasets for specimen centric - simple somatic mutation (SNVs and indels) - consensus coding mutations
+xepcawg1 = XenaData %>%
+  filter(XenaHostNames == "tcgaHub") %>%
+  XenaScan("LIHC_mc3.txt")
+xepcawg1
+## Download the dataset for specimen centric - simple somatic mutation (SNVs and indels) - consensus coding mutations
+somaticm = xepcawg1 %>% 
+  filter(DataSubtype == "somatic mutation (SNP and INDEL)") %>%  # select somatic mutations type of data
+  XenaGenerate() %>%  # generate a XenaHub object
+  XenaQuery() %>% 
+  XenaDownload()
+somaticm
+## Specify which exact dataset table we want to work with and get the working table
+somaticmut = XenaPrepare(somaticm)
+somaticmut
+
+## Scan datasets phenotype - overall survival
+xepcawg3 = XenaData %>%
+  filter(XenaHostNames == "tcgaHub") %>%
+  XenaScan("LIHC_survival.txt")
+xepcawg3
+## Download the dataset we want - OS
+oversur = xepcawg3 %>% 
+  filter(DataSubtype == "phenotype") %>%  # select OS
+  XenaGenerate() %>%  
+  XenaQuery() %>% 
+  XenaDownload()
+oversur
+## Specify which exact dataset table we want to work with and get the working table
+oversur2 =XenaPrepare(oversur)
+oversur2
+
+## Scan datasets phenotype - ALL
+xepcawg4 = XenaData %>%
+  filter(XenaHostNames == "tcgaHub") %>%
+  XenaScan("LIHC_clinicalMatrix")
+xepcawg4
+## Download phenotype - ALL
+spetype = xepcawg4 %>% 
+  filter(DataSubtype == "phenotype") %>%  # select ST
+  XenaGenerate() %>%  
+  XenaQuery() %>% 
+  XenaDownload()
+spetype
+## Get the working table
+spetype2 =XenaPrepare(spetype)
+spetype2
+
+## Scan datasets gene expression RNAseq - normalized 
+xepcawg6 = XenaData %>%
+  filter(XenaHostNames == "tcgaHub") %>%
+  XenaScan("TCGA.LIHC.sampleMap/HiSeqV2")
+xepcawg6
+## Download the dataset gene expression RNAseq - normalized 
+expresr = xepcawg6 %>% 
+  filter(DataSubtype == "gene expression RNAseq") %>%  # select somatic mutations
+  XenaGenerate() %>%
+  XenaQuery() %>% 
+  XenaDownload()
+expresr
+## Specify which exact dataset table we want to work with and get the working table
+expresrr =XenaPrepare(expresr)
+expresr2= expresrr$HiSeqV2.gz
+expresr2
+
+### Review all tables downloaded for specimen centric data ###
+
+## Simple somatic mutation (SNVs and indels) - consensus coding mutations
+View(somaticmut)
+## Phenotype - overall survival
+View(oversur2)
+## Phenotype - All
+View(spetype2)
+## Gene expression RNAseq - normalized 
+View(expresr2)
+
+
+#########
+### BASIC CARACTERIZATION #
+########
+
+spetype2 %>% 
+  rename(sample=sampleID) -> sss
+oversur2 %>% 
+  left_join(sss, by = "sample") -> stage
+
+stage1 = coxph(Surv(OS.time,OS)~gender,data=stage)
+summary(stage1)
+stage11= survfit(Surv(OS.time, OS) ~ gender, data = stage)
+ggsurvplot(stage11, data=stage, pval = TRUE, xlab="Time in days",risk.table = T)
+
+stage2 = coxph(Surv(OS.time,OS)~pathologic_stage + gender,data=stage)
+summary(stage2)
+stage22= survfit(Surv(OS.time, OS) ~ pathologic_stage, data = stage)
+ggsurvplot(stage22, data=stage, pval = TRUE, xlab="Time in days",risk.table = T)
+
+pathologic_stage
+
+surv_obj = Surv(stage$OS.time,stage$OS)
+length(surv_obj)
+length(stage$gender)
+stage
+# Fit a Cox proportional hazards model
+fit.coxph <- coxph(surv_obj ~ gender + pathologic_stage, data = stage)
+ggforest(fit.coxph, data = stage)
+
+
+
+
+### Tables transformation and organization
+
+#getwd()
+#file.choose()
+#setwd()
+#read_excel("mmm.xlsx")
+#unique(table$columnname)
+
+somaticmut %>% 
+  select(chr,start,reference,alt) -> mutcscape
+getwd()
+
+write.csv2(mutcscape, "tcgacscape.csv")
+
+resultscape= read_excel("tcgacscresults.xlsx")
+
+resultscape %>% 
+  rename(start = Start) -> rexxx
+somaticmut %>% 
+  left_join(rexxx, by = "start") ->resultscape2
+resultscape2
+
+#############
+
+#### Filter out oncogenic mutations and mutation duplicates in same patients
+tcga_onco <- resultscape2[grepl("oncogenic", resultscape2$Warning),]
+tcga_onco2 <- tcga_onco[!duplicated(tcga_onco[,1:6]),]
+
+#### Order by each patient (just to see the patient with more gene mutations)
+SplitByPatienttcga <- tcga_onco2 %>% group_split(sample)
+SplitByPatient2tcga <- SplitByPatienttcga[order(sapply(SplitByPatienttcga,nrow),decreasing=T)]
+
+#### Order by genes
+SplitByGenetcga <- tcga_onco2 %>% split(.$gene)
+SplitByGene2tcga <- SplitByGenetcga[order(sapply(SplitByGenetcga,nrow),decreasing = T)]
+OrdGenestcga <- do.call(rbind, SplitByGene2tcga)
+
+#### Create a DF of only oncogenic genes present in over 15 patients
+Genes15select <- setDT(OrdGenestcga)[, .SD[.N >15], gene]
+View(Genes15select)
+
+#############
+
+## Create different table for each gene that is biology significant
+
+Genes15tcga <- Genes15select %>% select(chr,start,end,reference,alt,gene)
+View(Genes15tcga)
+unique(Genes15tcga$gene)
+
+write.csv2(Genes15tcga, "tcgagenes15.csv")
+
+#[1] "TTN"      "CTNNB1"   "TP53"     "RYR2"     "MUC16"    "CSMD3"    "FUT9"    
+#[8] "LRP1B"    "OBSCN"    "CACNA1E"  "NBEA"     "ABCA13"   "CSMD1"    "GPR98"   
+#[15] "DOCK2"    "SPTA1"    "HMCN1"    "RYR1"     "FBN2"     "MUC4"     "PCLO"    
+#[22] "COL11A1"  "FRAS1"    "HERC2"    "SOX11"    "DNAH7"    "DYNC2H1"  "DNAH9"   
+#[29] "PKHD1L1"  "SDK1"     "UNC80"    "USH2A"    "BIRC6"    "PREX2"    "RYR3"    
+#[36] "SSPO"     "ABCA12"   "ALB"      "CSMD2"    "DNAH5"    "DST"      "FAT3"    
+#[43] "PCDH15"   "PRKDC"    "ROBO2"    "BAGE2"    "CACNA2D1" "DNAH10"   "DNAH8"   
+#[50] "FREM2"    "HERC2P3"  "LRP1"     "LRRK2"    "MYT1L"    "NEB"      "ABCB5"   
+#[57] "AXIN1"    "CUBN"     "DCC"      "HTT"      "KCNMA1"   "NPAP1"    "SYNE1"   
+#[64] "TRPA1" 
+
+abca12= read_excel("abca12.xlsx")
+abca12 %>% pull(mergeall) -> abca12pull
+abca12pull
+
+abca13= read_excel("abca13.xlsx")
+abca13 %>% pull(mergeall) -> abca13pull
+abca13pull
+
+abcb5 = read_excel("abcb5.xlsx")
+abcb5  %>% pull(mergeall) -> abcb5pull
+abcb5pull
+
+alb = read_excel("alb.xlsx")
+alb  %>% pull(mergeall) -> albpull
+albpull
+
+axin1 = read_excel("axin1.xlsx")
+axin1  %>% pull(mergeall) -> axin1pull
+axin1pull
+
+bage2 = read_excel("bage2.xlsx")
+bage2  %>% pull(mergeall) -> bage2pull
+bage2pull
+
+birc6 = read_excel("birc6.xlsx")
+birc6  %>% pull(mergeall) -> birc6pull
+birc6pull
+
+cacna1e = read_excel("cacna1e.xlsx")
+cacna1e  %>% pull(mergeall) -> cacna1epull
+cacna1epull
+
+cacna2d1 = read_excel("cacna2d1.xlsx")
+cacna2d1  %>% pull(mergeall) -> cacna2d1pull
+cacna2d1pull
+
+col11a1 = read_excel("col11a1.xlsx")
+col11a1  %>% pull(mergeall) -> col11a1pull
+col11a1pull
+
+csmd1 = read_excel("csmd1.xlsx")
+csmd1  %>% pull(mergeall) -> csmd1pull
+csmd1pull
+
+csmd2 = read_excel("csmd2.xlsx")
+csmd2  %>% pull(mergeall) -> csmd2pull
+csmd2pull
+
+csmd3 = read_excel("csmd3.xlsx")
+csmd3  %>% pull(mergeall) -> csmd3pull
+csmd3pull
+
+ctnnb1 = read_excel("ctnnb1.xlsx")
+ctnnb1  %>% pull(mergeall) -> ctnnb1pull
+ctnnb1pull
+
+cubn = read_excel("cubn.xlsx")
+cubn  %>% pull(mergeall) -> cubnpull
+cubnpull
+
+dcc = read_excel("dcc.xlsx")
+dcc  %>% pull(mergeall) -> dccpull
+dccpull
+
+dnah10 = read_excel("dnah10.xlsx")
+dnah10  %>% pull(mergeall) -> dnah10pull
+dnah10pull
+
+dnah5 = read_excel("dnah5.xlsx")
+dnah5  %>% pull(mergeall) -> dnah5pull
+dnah5pull
+
+dnah7 = read_excel("dnah7.xlsx")
+dnah7  %>% pull(mergeall) -> dnah7pull
+dnah7pull
+
+dnah8 = read_excel("dnah8.xlsx")
+dnah8  %>% pull(mergeall) -> dnah8pull
+dnah8pull
+
+dnah9 = read_excel("dnah9.xlsx")
+dnah9  %>% pull(mergeall) -> dnah9pull
+dnah9pull
+
+dock2  = read_excel("dock2.xlsx")
+dock2   %>% pull(mergeall) -> dock2pull
+dock2pull
+
+dst  = read_excel("dst.xlsx")
+dst   %>% pull(mergeall) -> dstpull
+dstpull
+
+dync2h1  = read_excel("dync2h1.xlsx")
+dync2h1   %>% pull(mergeall) -> dync2h1pull
+dync2h1pull
+
+fat3  = read_excel("fat3.xlsx")
+fat3   %>% pull(mergeall) -> fat3pull
+fat3pull
+
+fbn2  = read_excel("fbn2.xlsx")
+fbn2   %>% pull(mergeall) -> fbn2pull
+fbn2pull
+
+fras1  = read_excel("fras1.xlsx")
+fras1   %>% pull(mergeall) -> fras1pull
+fras1pull
+
+frem2  = read_excel("frem2.xlsx")
+frem2   %>% pull(mergeall) -> frem2pull
+frem2pull
+
+fut9  = read_excel("fut9.xlsx")
+fut9   %>% pull(mergeall) -> fut9pull
+fut9pull
+
+gpr98  = read_excel("gpr98.xlsx")
+gpr98   %>% pull(mergeall) -> gpr98pull
+gpr98pull
+
+herc2  = read_excel("herc2.xlsx")
+herc2   %>% pull(mergeall) -> herc2pull
+herc2pull
+
+herc2p3  = read_excel("herc2p3.xlsx")
+herc2p3   %>% pull(mergeall) -> herc2p3pull
+herc2p3pull
+
+hmcn1  = read_excel("hmcn1.xlsx")
+hmcn1   %>% pull(mergeall) -> hmcn1pull
+hmcn1pull
+
+htt  = read_excel("htt.xlsx")
+htt   %>% pull(mergeall) -> httpull
+httpull
+
+kcnma1  = read_excel("kcnma1.xlsx")
+kcnma1   %>% pull(mergeall) -> kcnma1pull
+kcnma1pull
+
+lrp1  = read_excel("lrp1.xlsx")
+lrp1   %>% pull(mergeall) -> lrp1pull
+lrp1pull
+
+lrp1b  = read_excel("lrp1b.xlsx")
+lrp1b   %>% pull(mergeall) -> lrp1bpull
+lrp1bpull
+
+lrrk2  = read_excel("lrrk2.xlsx")
+lrrk2   %>% pull(mergeall) -> lrrk2pull
+lrrk2pull
+
+muc16  = read_excel("muc16.xlsx")
+muc16   %>% pull(mergeall) -> muc16pull
+muc16pull
+
+muc4  = read_excel("muc4.xlsx")
+muc4   %>% pull(mergeall) -> muc4pull
+muc4pull
+
+myt1l  = read_excel("myt1l.xlsx")
+myt1l   %>% pull(mergeall) -> myt1lpull
+myt1lpull
+
+nbea  = read_excel("nbea.xlsx")
+nbea   %>% pull(mergeall) -> nbeapull
+nbeapull
+
+neb  = read_excel("neb.xlsx")
+neb   %>% pull(mergeall) -> nebpull
+nebpull
+
+npap1  = read_excel("npap1.xlsx")
+npap1   %>% pull(mergeall) -> npap1pull
+npap1pull
+
+obscn  = read_excel("obscn.xlsx")
+obscn   %>% pull(mergeall) -> obscnpull
+obscnpull
+
+pcdh15  = read_excel("pcdh15.xlsx")
+pcdh15   %>% pull(mergeall) -> pcdh15pull
+pcdh15pull
+
+pclo  = read_excel("pclo.xlsx")
+pclo   %>% pull(mergeall) -> pclopull
+pclopull
+
+pkhd1l1  = read_excel("pkhd1l1.xlsx")
+pkhd1l1   %>% pull(mergeall) -> pkhd1l1pull
+pkhd1l1pull
+
+prex2  = read_excel("prex2.xlsx")
+prex2   %>% pull(mergeall) -> prex2pull
+prex2pull
+
+prkdc  = read_excel("prkdc.xlsx")
+prkdc   %>% pull(mergeall) -> prkdcpull
+prkdcpull
+
+robo2  = read_excel("robo2.xlsx")
+robo2   %>% pull(mergeall) -> robo2pull
+robo2pull
+
+ryr1  = read_excel("ryr1.xlsx")
+ryr1   %>% pull(mergeall) -> ryr1pull
+ryr1pull
+
+ryr2  = read_excel("ryr2.xlsx")
+ryr2   %>% pull(mergeall) -> ryr2pull
+ryr2pull
+
+ryr3  = read_excel("ryr3.xlsx")
+ryr3   %>% pull(mergeall) -> ryr3pull
+ryr3pull
+
+sdk1  = read_excel("sdk1.xlsx")
+sdk1   %>% pull(mergeall) -> sdk1pull
+sdk1pull
+
+sox11  = read_excel("sox11.xlsx")
+sox11   %>% pull(mergeall) -> sox11pull
+sox11pull
+
+spta1  = read_excel("spta1.xlsx")
+spta1   %>% pull(mergeall) -> spta1pull
+spta1pull
+
+sspo  = read_excel("sspo.xlsx")
+sspo   %>% pull(mergeall) -> sspopull
+sspopull
+
+syne1  = read_excel("syne1.xlsx")
+syne1   %>% pull(mergeall) -> syne1pull
+syne1pull
+
+tp53  = read_excel("tp53.xlsx")
+tp53   %>% pull(mergeall) -> tp53pull
+tp53pull
+
+trpa1  = read_excel("trpa1.xlsx")
+trpa1   %>% pull(mergeall) -> trpa1pull
+trpa1pull
+
+ttn  = read_excel("ttn.xlsx")
+ttn   %>% pull(mergeall) -> ttnpull
+ttnpull
+
+unc80  = read_excel("unc80.xlsx")
+unc80   %>% pull(mergeall) -> unc80pull
+unc80pull
+
+ush2a  = read_excel("ush2a.xlsx")
+ush2a   %>% pull(mergeall) -> ush2apull
+ush2apull
+
+
+## Create main comparison merge column 
+somaticmut %>% 
+  unite("indexmerge", sep="_", chr:gene,remove = FALSE) -> tcgaind
+tcgaind %>% 
+  pull(indexmerge) -> referencelook 
+
+## Index creation for 20 gene
+referencelook %in% abca12pull-> abca12ind
+referencelook %in% abca13pull-> abca13ind
+referencelook %in% abcb5pull-> abcb5ind
+referencelook %in% albpull-> albind
+referencelook %in% axin1pull-> axin1ind
+referencelook %in% bage2pull-> bage2ind
+referencelook %in% birc6pull-> birc6ind
+referencelook %in% cacna1epull-> cacna1eind
+referencelook %in% cacna2d1pull-> cacna2d1ind
+referencelook %in% col11a1pull-> col11a1ind
+referencelook %in% csmd1pull-> csmd1ind
+referencelook %in% csmd2pull-> csmd2ind
+referencelook %in% csmd3pull-> csmd3ind
+referencelook %in% ctnnb1pull-> ctnnb1ind
+referencelook %in% cubnpull-> cubnind
+referencelook %in% dccpull-> dccind
+referencelook %in% dnah10pull-> dnah10ind
+referencelook %in% dnah5pull-> dnah5ind
+referencelook %in% dnah7pull-> dnah7ind
+referencelook %in% dnah8pull-> dnah8ind
+referencelook %in% dnah9pull-> dnah9ind
+referencelook %in% dock2pull-> dock2ind
+referencelook %in% dstpull-> dstind
+referencelook %in% dync2h1pull-> dync2h1ind
+referencelook %in% fat3pull-> fat3ind
+referencelook %in% fbn2pull-> fbn2ind
+referencelook %in% fras1pull-> fras1ind
+referencelook %in% frem2pull-> frem2ind
+referencelook %in% fut9pull-> fut9ind
+referencelook %in% gpr98pull-> gpr98ind
+referencelook %in% herc2pull-> herc2ind
+referencelook %in% herc2p3pull-> herc2p3ind
+referencelook %in% hmcn1pull-> hmcn1ind
+referencelook %in% httpull-> httind
+referencelook %in% kcnma1pull-> kcnma1ind
+referencelook %in% lrp1pull-> lrp1ind
+referencelook %in% lrp1bpull-> lrp1bind
+referencelook %in% lrrk2pull-> lrrk2ind
+referencelook %in% muc16pull-> muc16ind
+referencelook %in% muc4pull-> muc4ind
+referencelook %in% myt1lpull-> myt1lind
+referencelook %in% nbeapull-> nbeaind
+referencelook %in% nebpull-> nebind
+referencelook %in% npap1pull-> npap1ind
+referencelook %in% obscnpull-> obscnind
+referencelook %in% pcdh15pull-> pcdh15ind
+referencelook %in% pclopull-> pcloind
+referencelook %in% pkhd1l1pull-> pkhd1l1ind
+referencelook %in% prex2pull-> prex2ind
+referencelook %in% prkdcpull-> prkdcind
+referencelook %in% robo2pull-> robo2ind
+referencelook %in% ryr1pull-> ryr1ind
+referencelook %in% ryr2pull-> ryr2ind
+referencelook %in% ryr3pull-> ryr3ind
+referencelook %in% sdk1pull-> sdk1ind
+referencelook %in% sox11pull-> sox11ind
+referencelook %in% spta1pull-> spta1ind
+referencelook %in% sspopull-> sspoind
+referencelook %in% syne1pull-> syne1ind
+referencelook %in% tp53pull-> tp53ind
+referencelook %in% trpa1pull-> trpa1ind
+referencelook %in% ttnpull-> ttnind
+referencelook %in% unc80pull-> unc80ind
+referencelook %in% ush2apull-> ush2aind
+
+tcgaind %>%
+  mutate(abca12ind)%>%
+  mutate(abca13ind)%>%
+  mutate(abcb5ind)%>%
+  mutate(albind)%>%
+  mutate(axin1ind)%>%
+  mutate(bage2ind)%>%
+  mutate(birc6ind)%>%
+  mutate(cacna1eind)%>%
+  mutate(cacna2d1ind)%>%
+  mutate(col11a1ind)%>%
+  mutate(csmd1ind)%>%
+  mutate(csmd2ind)%>%
+  mutate(csmd3ind)%>%
+  mutate(ctnnb1ind)%>%
+  mutate(cubnind)%>%
+  mutate(dccind)%>%
+  mutate(dnah10ind)%>%
+  mutate(dnah5ind)%>%
+  mutate(dnah7ind)%>%
+  mutate(dnah8ind)%>%
+  mutate(dnah9ind)%>%
+  mutate(dock2ind)%>%
+  mutate(dstind)%>%
+  mutate(dync2h1ind)%>%
+  mutate(fat3ind)%>%
+  mutate(fbn2ind)%>%
+  mutate(fras1ind)%>%
+  mutate(frem2ind)%>%
+  mutate(fut9ind)%>%
+  mutate(gpr98ind)%>%
+  mutate(herc2ind)%>%
+  mutate(herc2p3ind)%>%
+  mutate(hmcn1ind)%>%
+  mutate(httind)%>%
+  mutate(kcnma1ind)%>%
+  mutate(lrp1ind)%>%
+  mutate(lrp1bind)%>%
+  mutate(lrrk2ind)%>%
+  mutate(muc16ind)%>%
+  mutate(muc4ind)%>%
+  mutate(myt1lind)%>%
+  mutate(nbeaind)%>%
+  mutate(nebind)%>%
+  mutate(npap1ind)%>%
+  mutate(obscnind)%>%
+  mutate(pcdh15ind)%>%
+  mutate(pcloind)%>%
+  mutate(pkhd1l1ind)%>%
+  mutate(prex2ind)%>%
+  mutate(prkdcind)%>%
+  mutate(robo2ind)%>%
+  mutate(ryr1ind)%>%
+  mutate(ryr2ind)%>%
+  mutate(ryr3ind)%>%
+  mutate(sdk1ind)%>%
+  mutate(sox11ind)%>%
+  mutate(spta1ind)%>%
+  mutate(sspoind)%>%
+  mutate(syne1ind)%>%
+  mutate(tp53ind)%>%
+  mutate(trpa1ind)%>%
+  mutate(ttnind)%>%
+  mutate(unc80ind)%>%
+  mutate(ush2aind) -> tcgamatrix
+View(tcgamatrix)
+
+# We get the dataset ready for the OS analysis 
+
+tcgamatrix %>% 
+  left_join(oversur2, by= "sample") -> osprep1
+
+abca12os <- osprep1 %>% 
+  unite("abca12", sep="_",sample,abca12ind,remove = FALSE) 
+os_abca12 <- abca12os[!duplicated(abca12os[,1]),]
+fitabca12 = coxph(Surv(OS.time,OS)~abca12ind,data=os_abca12)
+summary(fitabca12)
+fitabca12p = survfit(Surv(OS.time, OS) ~ abca12ind, data = os_abca12)
+ggsurvplot(fitabca12p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+abca13os <- osprep1 %>% 
+  unite("abca13", sep="_",sample,abca13ind,remove = FALSE) 
+os_abca13 <- abca13os[!duplicated(abca13os[,1]),]
+fitabca13 = coxph(Surv(OS.time,OS)~abca13ind,data=os_abca13)
+summary(fitabca13)
+fitabca13p = survfit(Surv(OS.time, OS) ~ abca13ind, data = os_abca13)
+ggsurvplot(fitabca13p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+abcb5os <- osprep1 %>% 
+  unite("abcb5", sep="_",sample,abcb5ind,remove = FALSE) 
+os_abcb5 <- abcb5os[!duplicated(abcb5os[,1]),]
+fitabcb5 = coxph(Surv(OS.time,OS)~abcb5ind,data=os_abcb5)
+summary(fitabcb5)
+fitabcb5p = survfit(Surv(OS.time, OS) ~ abcb5ind, data = os_abcb5)
+ggsurvplot(fitabcb5p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+albos <- osprep1 %>% 
+  unite("alb", sep="_",sample,albind,remove = FALSE) 
+os_alb <- albos[!duplicated(albos[,1]),]
+fitalb = coxph(Surv(OS.time,OS)~albind,data=os_alb)
+summary(fitalb)
+fitalbp = survfit(Surv(OS.time, OS) ~ albind, data = os_alb)
+ggsurvplot(fitalbp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+axin1os <- osprep1 %>% 
+  unite("axin1", sep="_",sample,axin1ind,remove = FALSE) 
+os_axin1 <- axin1os[!duplicated(axin1os[,1]),]
+fitaxin1 = coxph(Surv(OS.time,OS)~axin1ind,data=os_axin1)
+summary(fitaxin1)
+fitaxin1p = survfit(Surv(OS.time, OS) ~ axin1ind, data = os_axin1)
+ggsurvplot(fitaxin1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+bage2os <- osprep1 %>% 
+  unite("bage2", sep="_",sample,bage2ind,remove = FALSE) 
+os_bage2 <- bage2os[!duplicated(bage2os[,1]),]
+fitbage2 = coxph(Surv(OS.time,OS)~bage2ind,data=os_bage2)
+summary(fitbage2)
+fitbage2p = survfit(Surv(OS.time, OS) ~ bage2ind, data = os_bage2)
+ggsurvplot(fitbage2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+birc6os <- osprep1 %>% 
+  unite("birc6", sep="_",sample,birc6ind,remove = FALSE) 
+os_birc6 <- birc6os[!duplicated(birc6os[,1]),]
+fitbirc6 = coxph(Surv(OS.time,OS)~birc6ind,data=os_birc6)
+summary(fitbirc6)
+fitbirc6p = survfit(Surv(OS.time, OS) ~ birc6ind, data = os_birc6)
+ggsurvplot(fitbirc6p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+cacna1eos <- osprep1 %>% 
+  unite("cacna1e", sep="_",sample,cacna1eind,remove = FALSE) 
+os_cacna1e <- cacna1eos[!duplicated(cacna1eos[,1]),]
+fitcacna1e = coxph(Surv(OS.time,OS)~cacna1eind,data=os_cacna1e)
+summary(fitcacna1e)
+fitcacna1ep = survfit(Surv(OS.time, OS) ~ cacna1eind, data = os_cacna1e)
+ggsurvplot(fitcacna1ep, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+cacna2d1os <- osprep1 %>% 
+  unite("cacna2d1", sep="_",sample,cacna2d1ind,remove = FALSE) 
+os_cacna2d1 <- cacna2d1os[!duplicated(cacna2d1os[,1]),]
+fitcacna2d1 = coxph(Surv(OS.time,OS)~cacna2d1ind,data=os_cacna2d1)
+summary(fitcacna2d1)
+fitcacna2d1p = survfit(Surv(OS.time, OS) ~ cacna2d1ind, data = os_cacna2d1)
+ggsurvplot(fitcacna2d1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+col11a1os <- osprep1 %>% 
+  unite("col11a1", sep="_",sample,col11a1ind,remove = FALSE) 
+os_col11a1 <- col11a1os[!duplicated(col11a1os[,1]),]
+fitcol11a1 = coxph(Surv(OS.time,OS)~col11a1ind,data=os_col11a1)
+summary(fitcol11a1)
+fitcol11a1p = survfit(Surv(OS.time, OS) ~ col11a1ind, data = os_col11a1)
+ggsurvplot(fitcol11a1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+csmd1os <- osprep1 %>% 
+  unite("csmd1", sep="_",sample,csmd1ind,remove = FALSE) 
+os_csmd1 <- csmd1os[!duplicated(csmd1os[,1]),]
+fitcsmd1 = coxph(Surv(OS.time,OS)~csmd1ind,data=os_csmd1)
+summary(fitcsmd1)
+fitcsmd1p = survfit(Surv(OS.time, OS) ~ csmd1ind, data = os_csmd1)
+ggsurvplot(fitcsmd1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+csmd2os <- osprep1 %>% 
+  unite("csmd2", sep="_",sample,csmd2ind,remove = FALSE) 
+os_csmd2 <- csmd2os[!duplicated(csmd2os[,1]),]
+fitcsmd2 = coxph(Surv(OS.time,OS)~csmd2ind,data=os_csmd2)
+summary(fitcsmd2)
+fitcsmd2p = survfit(Surv(OS.time, OS) ~ csmd2ind, data = os_csmd2)
+ggsurvplot(fitcsmd2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+csmd3os <- osprep1 %>% 
+  unite("csmd3", sep="_",sample,csmd3ind,remove = FALSE) 
+os_csmd3 <- csmd3os[!duplicated(csmd3os[,1]),]
+fitcsmd3 = coxph(Surv(OS.time,OS)~csmd3ind,data=os_csmd3)
+summary(fitcsmd3)
+fitcsmd3p = survfit(Surv(OS.time, OS) ~ csmd3ind, data = os_csmd3)
+ggsurvplot(fitcsmd3p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+ctnnb1os <- osprep1 %>% 
+  unite("ctnnb1", sep="_",sample,ctnnb1ind,remove = FALSE) 
+os_ctnnb1 <- ctnnb1os[!duplicated(ctnnb1os[,1]),]
+fitctnnb1 = coxph(Surv(OS.time,OS)~ctnnb1ind,data=os_ctnnb1)
+summary(fitctnnb1)
+fitctnnb1p = survfit(Surv(OS.time, OS) ~ ctnnb1ind, data = os_ctnnb1)
+ggsurvplot(fitctnnb1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+cubnos <- osprep1 %>% 
+  unite("cubn", sep="_",sample,cubnind,remove = FALSE) 
+os_cubn <- cubnos[!duplicated(cubnos[,1]),]
+fitcubn = coxph(Surv(OS.time,OS)~cubnind,data=os_cubn)
+summary(fitcubn)
+fitcubnp = survfit(Surv(OS.time, OS) ~ cubnind, data = os_cubn)
+ggsurvplot(fitcubnp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+dccos <- osprep1 %>% # 0.033
+  unite("dcc", sep="_",sample,dccind,remove = FALSE) 
+os_dcc <- dccos[!duplicated(dccos[,1]),]
+fitdcc = coxph(Surv(OS.time,OS)~dccind,data=os_dcc)
+summary(fitdcc)
+fitdccp = survfit(Surv(OS.time, OS) ~ dccind, data = os_dcc)
+ggsurvplot(fitdccp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+dnah10os <- osprep1 %>% # 0.0028
+  unite("dnah10", sep="_",sample,dnah10ind,remove = FALSE) 
+os_dnah10 <- dnah10os[!duplicated(dnah10os[,1]),]
+fitdnah10 = coxph(Surv(OS.time,OS)~dnah10ind,data=os_dnah10)
+summary(fitdnah10)
+fitdnah10p = survfit(Surv(OS.time, OS) ~ dnah10ind, data = os_dnah10)
+ggsurvplot(fitdnah10p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+dnah5os <- osprep1 %>% #0.0023
+  unite("dnah5", sep="_",sample,dnah5ind,remove = FALSE) 
+os_dnah5 <- dnah5os[!duplicated(dnah5os[,1]),]
+fitdnah5 = coxph(Surv(OS.time,OS)~dnah5ind,data=os_dnah5)
+summary(fitdnah5)
+fitdnah5p = survfit(Surv(OS.time, OS) ~ dnah5ind, data = os_dnah5)
+ggsurvplot(fitdnah5p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+dnah7os <- osprep1 %>% 
+  unite("dnah7", sep="_",sample,dnah7ind,remove = FALSE) 
+os_dnah7 <- dnah7os[!duplicated(dnah7os[,1]),]
+fitdnah7 = coxph(Surv(OS.time,OS)~dnah7ind,data=os_dnah7)
+summary(fitdnah7)
+fitdnah7p = survfit(Surv(OS.time, OS) ~ dnah7ind, data = os_dnah7)
+ggsurvplot(fitdnah7p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+dnah8os <- osprep1 %>% #0.00044
+  unite("dnah8", sep="_",sample,dnah8ind,remove = FALSE) 
+os_dnah8 <- dnah8os[!duplicated(dnah8os[,1]),]
+fitdnah8 = coxph(Surv(OS.time,OS)~dnah8ind,data=os_dnah8)
+summary(fitdnah8)
+fitdnah8p = survfit(Surv(OS.time, OS) ~ dnah8ind, data = os_dnah8)
+ggsurvplot(fitdnah8p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+dnah9os <- osprep1 %>% 
+  unite("dnah9", sep="_",sample,dnah9ind,remove = FALSE) 
+os_dnah9 <- dnah9os[!duplicated(dnah9os[,1]),]
+fitdnah9 = coxph(Surv(OS.time,OS)~dnah9ind,data=os_dnah9)
+summary(fitdnah9)
+fitdnah9p = survfit(Surv(OS.time, OS) ~ dnah9ind, data = os_dnah9)
+ggsurvplot(fitdnah9p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+dock2os <- osprep1 %>% #0.0001
+  unite("dock2", sep="_",sample,dock2ind,remove = FALSE) 
+os_dock2 <- dock2os[!duplicated(dock2os[,1]),]
+fitdock2 = coxph(Surv(OS.time,OS)~dock2ind,data=os_dock2)
+summary(fitdock2)
+fitdock2p = survfit(Surv(OS.time, OS) ~ dock2ind, data = os_dock2)
+ggsurvplot(fitdock2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+dstos <- osprep1 %>% 
+  unite("dst", sep="_",sample,dstind,remove = FALSE) 
+os_dst <- dstos[!duplicated(dstos[,1]),]
+fitdst = coxph(Surv(OS.time,OS)~dstind,data=os_dst)
+summary(fitdst)
+fitdstp = survfit(Surv(OS.time, OS) ~ dstind, data = os_dst)
+ggsurvplot(fitdstp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+dync2h1os <- osprep1 %>% 
+  unite("dync2h1", sep="_",sample,dync2h1ind,remove = FALSE) 
+os_dync2h1 <- dync2h1os[!duplicated(dync2h1os[,1]),]
+fitdync2h1 = coxph(Surv(OS.time,OS)~dync2h1ind,data=os_dync2h1)
+summary(fitdync2h1)
+fitdync2h1p = survfit(Surv(OS.time, OS) ~ dync2h1ind, data = os_dync2h1)
+ggsurvplot(fitdync2h1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+fat3os <- osprep1 %>% 
+  unite("fat3", sep="_",sample,fat3ind,remove = FALSE) 
+os_fat3 <- fat3os[!duplicated(fat3os[,1]),]
+fitfat3 = coxph(Surv(OS.time,OS)~fat3ind,data=os_fat3)
+summary(fitfat3)
+fitfat3p = survfit(Surv(OS.time, OS) ~ fat3ind, data = os_fat3)
+ggsurvplot(fitfat3p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+fbn2os <- osprep1 %>% 
+  unite("fbn2", sep="_",sample,fbn2ind,remove = FALSE) 
+os_fbn2 <- fbn2os[!duplicated(fbn2os[,1]),]
+fitfbn2 = coxph(Surv(OS.time,OS)~fbn2ind,data=os_fbn2)
+summary(fitfbn2)
+fitfbn2p = survfit(Surv(OS.time, OS) ~ fbn2ind, data = os_fbn2)
+ggsurvplot(fitfbn2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+fras1os <- osprep1 %>% 
+  unite("fras1", sep="_",sample,fras1ind,remove = FALSE) 
+os_fras1 <- fras1os[!duplicated(fras1os[,1]),]
+fitfras1 = coxph(Surv(OS.time,OS)~fras1ind,data=os_fras1)
+summary(fitfras1)
+fitfras1p = survfit(Surv(OS.time, OS) ~ fras1ind, data = os_fras1)
+ggsurvplot(fitfras1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+frem2os <- osprep1 %>% 
+  unite("frem2", sep="_",sample,frem2ind,remove = FALSE) 
+os_frem2 <- frem2os[!duplicated(frem2os[,1]),]
+fitfrem2 = coxph(Surv(OS.time,OS)~frem2ind,data=os_frem2)
+summary(fitfrem2)
+fitfrem2p = survfit(Surv(OS.time, OS) ~ frem2ind, data = os_frem2)
+ggsurvplot(fitfrem2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+fut9os <- osprep1 %>% 
+  unite("fut9", sep="_",sample,fut9ind,remove = FALSE) 
+os_fut9 <- fut9os[!duplicated(fut9os[,1]),]
+fitfut9 = coxph(Surv(OS.time,OS)~fut9ind,data=os_fut9)
+summary(fitfut9)
+fitfut9p = survfit(Surv(OS.time, OS) ~ fut9ind, data = os_fut9)
+ggsurvplot(fitfut9p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+gpr98os <- osprep1 %>% 
+  unite("gpr98", sep="_",sample,gpr98ind,remove = FALSE) 
+os_gpr98 <- gpr98os[!duplicated(gpr98os[,1]),]
+fitgpr98 = coxph(Surv(OS.time,OS)~gpr98ind,data=os_gpr98)
+summary(fitgpr98)
+fitgpr98p = survfit(Surv(OS.time, OS) ~ gpr98ind, data = os_gpr98)
+ggsurvplot(fitgpr98p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+herc2os <- osprep1 %>% 
+  unite("herc2", sep="_",sample,herc2ind,remove = FALSE) 
+os_herc2 <- herc2os[!duplicated(herc2os[,1]),]
+fitherc2 = coxph(Surv(OS.time,OS)~herc2ind,data=os_herc2)
+summary(fitherc2)
+fitherc2p = survfit(Surv(OS.time, OS) ~ herc2ind, data = os_herc2)
+ggsurvplot(fitherc2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+herc2p3os <- osprep1 %>% # 0.032
+  unite("herc2p3", sep="_",sample,herc2p3ind,remove = FALSE) 
+os_herc2p3 <- herc2p3os[!duplicated(herc2p3os[,1]),]
+fitherc2p3 = coxph(Surv(OS.time,OS)~herc2p3ind,data=os_herc2p3)
+summary(fitherc2p3)
+fitherc2p3p = survfit(Surv(OS.time, OS) ~ herc2p3ind, data = os_herc2p3)
+ggsurvplot(fitherc2p3p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+hmcn1os <- osprep1 %>% 
+  unite("hmcn1", sep="_",sample,hmcn1ind,remove = FALSE) 
+os_hmcn1 <- hmcn1os[!duplicated(hmcn1os[,1]),]
+fithmcn1 = coxph(Surv(OS.time,OS)~hmcn1ind,data=os_hmcn1)
+summary(fithmcn1)
+fithmcn1p = survfit(Surv(OS.time, OS) ~ hmcn1ind, data = os_hmcn1)
+ggsurvplot(fithmcn1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+httos <- osprep1 %>% 
+  unite("htt", sep="_",sample,httind,remove = FALSE) 
+os_htt <- httos[!duplicated(httos[,1]),]
+fithtt = coxph(Surv(OS.time,OS)~httind,data=os_htt)
+summary(fithtt)
+fithttp = survfit(Surv(OS.time, OS) ~ httind, data = os_htt)
+ggsurvplot(fithttp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+kcnma1os <- osprep1 %>% 
+  unite("kcnma1", sep="_",sample,kcnma1ind,remove = FALSE) 
+os_kcnma1 <- kcnma1os[!duplicated(kcnma1os[,1]),]
+fitkcnma1 = coxph(Surv(OS.time,OS)~kcnma1ind,data=os_kcnma1)
+summary(fitkcnma1)
+fitkcnma1p = survfit(Surv(OS.time, OS) ~ kcnma1ind, data = os_kcnma1)
+ggsurvplot(fitkcnma1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+lrp1os <- osprep1 %>% 
+  unite("lrp1", sep="_",sample,lrp1ind,remove = FALSE) 
+os_lrp1 <- lrp1os[!duplicated(lrp1os[,1]),]
+fitlrp1 = coxph(Surv(OS.time,OS)~lrp1ind,data=os_lrp1)
+summary(fitlrp1)
+fitlrp1p = survfit(Surv(OS.time, OS) ~ lrp1ind, data = os_lrp1)
+ggsurvplot(fitlrp1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+lrp1bos <- osprep1 %>% # 0.026
+  unite("lrp1b", sep="_",sample,lrp1bind,remove = FALSE) 
+os_lrp1b <- lrp1bos[!duplicated(lrp1bos[,1]),]
+fitlrp1b = coxph(Surv(OS.time,OS)~lrp1bind,data=os_lrp1b)
+summary(fitlrp1b)
+fitlrp1bp = survfit(Surv(OS.time, OS) ~ lrp1bind, data = os_lrp1b)
+ggsurvplot(fitlrp1bp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+lrrk2os <- osprep1 %>% 
+  unite("lrrk2", sep="_",sample,lrrk2ind,remove = FALSE) 
+os_lrrk2 <- lrrk2os[!duplicated(lrrk2os[,1]),]
+fitlrrk2 = coxph(Surv(OS.time,OS)~lrrk2ind,data=os_lrrk2)
+summary(fitlrrk2)
+fitlrrk2p = survfit(Surv(OS.time, OS) ~ lrrk2ind, data = os_lrrk2)
+ggsurvplot(fitlrrk2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+muc16os <- osprep1 %>% 
+  unite("muc16", sep="_",sample,muc16ind,remove = FALSE) 
+os_muc16 <- muc16os[!duplicated(muc16os[,1]),]
+fitmuc16 = coxph(Surv(OS.time,OS)~muc16ind,data=os_muc16)
+summary(fitmuc16)
+fitmuc16p = survfit(Surv(OS.time, OS) ~ muc16ind, data = os_muc16)
+ggsurvplot(fitmuc16p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+muc4os <- osprep1 %>% 
+  unite("muc4", sep="_",sample,muc4ind,remove = FALSE) 
+os_muc4 <- muc4os[!duplicated(muc4os[,1]),]
+fitmuc4 = coxph(Surv(OS.time,OS)~muc4ind,data=os_muc4)
+summary(fitmuc4)
+fitmuc4p = survfit(Surv(OS.time, OS) ~ muc4ind, data = os_muc4)
+ggsurvplot(fitmuc4p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+myt1los <- osprep1 %>% 
+  unite("myt1l", sep="_",sample,myt1lind,remove = FALSE) 
+os_myt1l <- myt1los[!duplicated(myt1los[,1]),]
+fitmyt1l = coxph(Surv(OS.time,OS)~myt1lind,data=os_myt1l)
+summary(fitmyt1l)
+fitmyt1lp = survfit(Surv(OS.time, OS) ~ myt1lind, data = os_myt1l)
+ggsurvplot(fitmyt1lp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+nbeaos <- osprep1 %>% 
+  unite("nbea", sep="_",sample,nbeaind,remove = FALSE) 
+os_nbea <- nbeaos[!duplicated(nbeaos[,1]),]
+fitnbea = coxph(Surv(OS.time,OS)~nbeaind,data=os_nbea)
+summary(fitnbea)
+fitnbeap = survfit(Surv(OS.time, OS) ~ nbeaind, data = os_nbea)
+ggsurvplot(fitnbeap, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+nebos <- osprep1 %>% 
+  unite("neb", sep="_",sample,nebind,remove = FALSE) 
+os_neb <- nebos[!duplicated(nebos[,1]),]
+fitneb = coxph(Surv(OS.time,OS)~nebind,data=os_neb)
+summary(fitneb)
+fitnebp = survfit(Surv(OS.time, OS) ~ nebind, data = os_neb)
+ggsurvplot(fitnebp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+npap1os <- osprep1 %>% 
+  unite("npap1", sep="_",sample,npap1ind,remove = FALSE) 
+os_npap1 <- npap1os[!duplicated(npap1os[,1]),]
+fitnpap1 = coxph(Surv(OS.time,OS)~npap1ind,data=os_npap1)
+summary(fitnpap1)
+fitnpap1p = survfit(Surv(OS.time, OS) ~ npap1ind, data = os_npap1)
+ggsurvplot(fitnpap1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+obscnos <- osprep1 %>% 
+  unite("obscn", sep="_",sample,obscnind,remove = FALSE) 
+os_obscn <- obscnos[!duplicated(obscnos[,1]),]
+fitobscn = coxph(Surv(OS.time,OS)~obscnind,data=os_obscn)
+summary(fitobscn)
+fitobscnp = survfit(Surv(OS.time, OS) ~ obscnind, data = os_obscn)
+ggsurvplot(fitobscnp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+pcdh15os <- osprep1 %>% 
+  unite("pcdh15", sep="_",sample,pcdh15ind,remove = FALSE) 
+os_pcdh15 <- pcdh15os[!duplicated(pcdh15os[,1]),]
+fitpcdh15 = coxph(Surv(OS.time,OS)~pcdh15ind,data=os_pcdh15)
+summary(fitpcdh15)
+fitpcdh15p = survfit(Surv(OS.time, OS) ~ pcdh15ind, data = os_pcdh15)
+ggsurvplot(fitpcdh15p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+pcloos <- osprep1 %>% # 0.0272
+  unite("pclo", sep="_",sample,pcloind,remove = FALSE) 
+os_pclo <- pcloos[!duplicated(pcloos[,1]),]
+fitpclo = coxph(Surv(OS.time,OS)~pcloind,data=os_pclo)
+summary(fitpclo)
+fitpclop = survfit(Surv(OS.time, OS) ~ pcloind, data = os_pclo)
+ggsurvplot(fitpclop, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+pkhd1l1os <- osprep1 %>% 
+  unite("pkhd1l1", sep="_",sample,pkhd1l1ind,remove = FALSE) 
+os_pkhd1l1 <- pkhd1l1os[!duplicated(pkhd1l1os[,1]),]
+fitpkhd1l1 = coxph(Surv(OS.time,OS)~pkhd1l1ind,data=os_pkhd1l1)
+summary(fitpkhd1l1)
+fitpkhd1l1p = survfit(Surv(OS.time, OS) ~ pkhd1l1ind, data = os_pkhd1l1)
+ggsurvplot(fitpkhd1l1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+prex2os <- osprep1 %>% 
+  unite("prex2", sep="_",sample,prex2ind,remove = FALSE) 
+os_prex2 <- prex2os[!duplicated(prex2os[,1]),]
+fitprex2 = coxph(Surv(OS.time,OS)~prex2ind,data=os_prex2)
+summary(fitprex2)
+fitprex2p = survfit(Surv(OS.time, OS) ~ prex2ind, data = os_prex2)
+ggsurvplot(fitprex2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+prkdcos <- osprep1 %>% 
+  unite("prkdc", sep="_",sample,prkdcind,remove = FALSE) 
+os_prkdc <- prkdcos[!duplicated(prkdcos[,1]),]
+fitprkdc = coxph(Surv(OS.time,OS)~prkdcind,data=os_prkdc)
+summary(fitprkdc)
+fitprkdcp = survfit(Surv(OS.time, OS) ~ prkdcind, data = os_prkdc)
+ggsurvplot(fitprkdcp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+robo2os <- osprep1 %>% 
+  unite("robo2", sep="_",sample,robo2ind,remove = FALSE) 
+os_robo2 <- robo2os[!duplicated(robo2os[,1]),]
+fitrobo2 = coxph(Surv(OS.time,OS)~robo2ind,data=os_robo2)
+summary(fitrobo2)
+fitrobo2p = survfit(Surv(OS.time, OS) ~ robo2ind, data = os_robo2)
+ggsurvplot(fitrobo2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+ryr1os <- osprep1 %>% 
+  unite("ryr1", sep="_",sample,ryr1ind,remove = FALSE) 
+os_ryr1 <- ryr1os[!duplicated(ryr1os[,1]),]
+fitryr1 = coxph(Surv(OS.time,OS)~ryr1ind,data=os_ryr1)
+summary(fitryr1)
+fitryr1p = survfit(Surv(OS.time, OS) ~ ryr1ind, data = os_ryr1)
+ggsurvplot(fitryr1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+ryr2os <- osprep1 %>% 
+  unite("ryr2", sep="_",sample,ryr2ind,remove = FALSE) 
+os_ryr2 <- ryr2os[!duplicated(ryr2os[,1]),]
+fitryr2 = coxph(Surv(OS.time,OS)~ryr2ind,data=os_ryr2)
+summary(fitryr2)
+fitryr2p = survfit(Surv(OS.time, OS) ~ ryr2ind, data = os_ryr2)
+ggsurvplot(fitryr2p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+ryr3os <- osprep1 %>% 
+  unite("ryr3", sep="_",sample,ryr3ind,remove = FALSE) 
+os_ryr3 <- ryr3os[!duplicated(ryr3os[,1]),]
+fitryr3 = coxph(Surv(OS.time,OS)~ryr3ind,data=os_ryr3)
+summary(fitryr3)
+fitryr3p = survfit(Surv(OS.time, OS) ~ ryr3ind, data = os_ryr3)
+ggsurvplot(fitryr3p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+sdk1os <- osprep1 %>% 
+  unite("sdk1", sep="_",sample,sdk1ind,remove = FALSE) 
+os_sdk1 <- sdk1os[!duplicated(sdk1os[,1]),]
+fitsdk1 = coxph(Surv(OS.time,OS)~sdk1ind,data=os_sdk1)
+summary(fitsdk1)
+fitsdk1p = survfit(Surv(OS.time, OS) ~ sdk1ind, data = os_sdk1)
+ggsurvplot(fitsdk1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+sox11os <- osprep1 %>% 
+  unite("sox11", sep="_",sample,sox11ind,remove = FALSE) 
+os_sox11 <- sox11os[!duplicated(sox11os[,1]),]
+fitsox11 = coxph(Surv(OS.time,OS)~sox11ind,data=os_sox11)
+summary(fitsox11)
+fitsox11p = survfit(Surv(OS.time, OS) ~ sox11ind, data = os_sox11)
+ggsurvplot(fitsox11p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+spta1os <- osprep1 %>% 
+  unite("spta1", sep="_",sample,spta1ind,remove = FALSE) 
+os_spta1 <- spta1os[!duplicated(spta1os[,1]),]
+fitspta1 = coxph(Surv(OS.time,OS)~spta1ind,data=os_spta1)
+summary(fitspta1)
+fitspta1p = survfit(Surv(OS.time, OS) ~ spta1ind, data = os_spta1)
+ggsurvplot(fitspta1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+sspoos <- osprep1 %>% 
+  unite("sspo", sep="_",sample,sspoind,remove = FALSE) 
+os_sspo <- sspoos[!duplicated(sspoos[,1]),]
+fitsspo = coxph(Surv(OS.time,OS)~sspoind,data=os_sspo)
+summary(fitsspo)
+fitsspop = survfit(Surv(OS.time, OS) ~ sspoind, data = os_sspo)
+ggsurvplot(fitsspop, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+syne1os <- osprep1 %>% 
+  unite("syne1", sep="_",sample,syne1ind,remove = FALSE) 
+os_syne1 <- syne1os[!duplicated(syne1os[,1]),]
+fitsyne1 = coxph(Surv(OS.time,OS)~syne1ind,data=os_syne1)
+summary(fitsyne1)
+fitsyne1p = survfit(Surv(OS.time, OS) ~ syne1ind, data = os_syne1)
+ggsurvplot(fitsyne1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+tp53os <- osprep1 %>% 
+  unite("tp53", sep="_",sample,tp53ind,remove = FALSE) 
+os_tp53 <- tp53os[!duplicated(tp53os[,1]),]
+fittp53 = coxph(Surv(OS.time,OS)~tp53ind,data=os_tp53)
+summary(fittp53)
+fittp53p = survfit(Surv(OS.time, OS) ~ tp53ind, data = os_tp53)
+ggsurvplot(fittp53p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+trpa1os <- osprep1 %>% 
+  unite("trpa1", sep="_",sample,trpa1ind,remove = FALSE) 
+os_trpa1 <- trpa1os[!duplicated(trpa1os[,1]),]
+fittrpa1 = coxph(Surv(OS.time,OS)~trpa1ind,data=os_trpa1)
+summary(fittrpa1)
+fittrpa1p = survfit(Surv(OS.time, OS) ~ trpa1ind, data = os_trpa1)
+ggsurvplot(fittrpa1p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+ttnos <- osprep1 %>% 
+  unite("ttn", sep="_",sample,ttnind,remove = FALSE) 
+os_ttn <- ttnos[!duplicated(ttnos[,1]),]
+fitttn = coxph(Surv(OS.time,OS)~ttnind,data=os_ttn)
+summary(fitttn)
+fitttnp = survfit(Surv(OS.time, OS) ~ ttnind, data = os_ttn)
+ggsurvplot(fitttnp, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+unc80os <- osprep1 %>% 
+  unite("unc80", sep="_",sample,unc80ind,remove = FALSE) 
+os_unc80 <- unc80os[!duplicated(unc80os[,1]),]
+fitunc80 = coxph(Surv(OS.time,OS)~unc80ind,data=os_unc80)
+summary(fitunc80)
+fitunc80p = survfit(Surv(OS.time, OS) ~ unc80ind, data = os_unc80)
+ggsurvplot(fitunc80p, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+ush2aos <- osprep1 %>% 
+  unite("ush2a", sep="_",sample,ush2aind,remove = FALSE) 
+os_ush2a <- ush2aos[!duplicated(ush2aos[,1]),]
+fitush2a = coxph(Surv(OS.time,OS)~ush2aind,data=os_ush2a)
+summary(fitush2a)
+fitush2ap = survfit(Surv(OS.time, OS) ~ ush2aind, data = os_ush2a)
+ggsurvplot(fitush2ap, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+
+####################
+######## RNA ######
+####################
+
+hcc_cohort = XenaData %>% 
+  filter(XenaHostNames == "tcgaHub") %>% # select TCGA Hub
+  XenaScan("LIHC")   # select LIHC cohort
+hcc_cohort
+
+cli_queryhcc = hcc_cohort %>% 
+  filter(DataSubtype == "phenotype") %>%  # select clinical dataset
+  XenaGenerate() %>%  # generate a XenaHub object
+  XenaQuery() %>% 
+  XenaDownload()
+#> This will check url status, please be patient.
+#> All downloaded files will under directory /var/folders/bj/nw1w4g1j37ddpgb6zmh3sfh80000gn/T//RtmpLpcBQu.
+#> The 'trans_slash' option is FALSE, keep same directory structure as Xena.
+#> Creating directories for datasets...
+#> Downloading TCGA.LUAD.sampleMap/LUAD_clinicalMatrix
+#> Downloading survival/LUAD_survival.txt.gz
+clihcc = XenaPrepare(cli_queryhcc)
+clihcc
+
+clihcc = clihcc$LIHC_survival.txt.gz
+# See a few rows
+head(clihcc)
+
+hcc_cohort %>% 
+  filter(DataSubtype == "gene expression RNAseq", Label == "IlluminaHiSeq") -> gehcc
+gehcc
+
+# GENE EVALUATION
+
+##DOCK2
+DOCK2 = fetch_dense_values(host = gehcc$XenaHosts, 
+                           dataset = gehcc$XenaDatasets, 
+                           identifiers = "DOCK2",
+                           use_probeMap = TRUE) %>% 
+  .[1, ]
+DOCK2
+head(DOCK2)
+#
+merged_dataDOCK2 = tibble(sample = names(DOCK2),
+                          DOCK2_expression = as.numeric(DOCK2)) %>% 
+  left_join(clihcc, by = "sample") %>% 
+  filter(substr(sample, 14, 15) == "01") %>%  # Keep only 'Primary Tumor'
+  select(sample, DOCK2_expression, OS.time, OS) %>% 
+  rename(time = OS.time, 
+         status = OS)
+
+head(merged_dataDOCK2)
+merged_dataDOCK2  
+
+fittp = coxph(Surv(time, status) ~ DOCK2_expression, data = merged_dataDOCK2)
+fittp
+summary(fittp)
+--
+###
+merged_dataDOCK2 = merged_dataDOCK2 %>% 
+  mutate(group = case_when(
+    DOCK2_expression > quantile(DOCK2_expression, 0.5) ~ 'DOCK2_High',
+    DOCK2_expression < quantile(DOCK2_expression, 0.5) ~ 'DOCK2_Low',
+    TRUE ~ NA_character_
+  ))
+
+fittp = survfit(Surv(time, status) ~ group, data = merged_dataDOCK2)
+ggsurvplot(fittp, pval = TRUE,risk.table = TRUE)
+####
+
+LRP1B = fetch_dense_values(host = gehcc$XenaHosts, 
+                           dataset = gehcc$XenaDatasets, 
+                           identifiers = "LRP1B",
+                           use_probeMap = TRUE) %>% 
+  .[1, ]
+LRP1B
+head(LRP1B)
+#
+merged_dataLRP1B = tibble(sample = names(LRP1B),
+                          LRP1B_expression = as.numeric(LRP1B)) %>% 
+  left_join(clihcc, by = "sample") %>% 
+  filter(substr(sample, 14, 15) == "01") %>%  # Keep only 'Primary Tumor'
+  select(sample, LRP1B_expression, OS.time, OS) %>% 
+  rename(time = OS.time, 
+         status = OS)
+
+head(merged_dataLRP1B)
+merged_dataLRP1B  
+
+fittp = coxph(Surv(time, status) ~ LRP1B_expression, data = merged_dataLRP1B)
+fittp
+summary(fittp)
+--
+  ###
+  
+merged_dataLRP1B = merged_dataLRP1B %>% 
+  mutate(group = case_when(
+    LRP1B_expression > quantile(LRP1B_expression, 0.5) ~ 'LRP1B_High',
+    LRP1B_expression < quantile(LRP1B_expression, 0.5) ~ 'LRP1B_Low',
+    TRUE ~ NA_character_
+  ))
+
+fittp = survfit(Surv(time, status) ~ group, data = merged_dataLRP1B)
+ggsurvplot(fittp, pval = TRUE,risk.table = TRUE)
+
+#### PCLO
+
+PCLO = fetch_dense_values(host = gehcc$XenaHosts, 
+                          dataset = gehcc$XenaDatasets, 
+                          identifiers = "PCLO",
+                          use_probeMap = TRUE) %>% 
+  .[1, ]
+PCLO
+head(PCLO)
+#
+merged_dataPCLO = tibble(sample = names(PCLO),
+                         PCLO_expression = as.numeric(PCLO)) %>% 
+  left_join(clihcc, by = "sample") %>% 
+  filter(substr(sample, 14, 15) == "01") %>%  # Keep only 'Primary Tumor'
+  select(sample, PCLO_expression, OS.time, OS) %>% 
+  rename(time = OS.time, 
+         status = OS)
+
+head(merged_dataPCLO)
+merged_dataPCLO  
+
+fittp = coxph(Surv(time, status) ~ PCLO_expression, data = merged_dataPCLO)
+fittp
+summary(fittp)
+
+  ###
+merged_dataPCLO = merged_dataPCLO %>% 
+  mutate(group = case_when(
+    PCLO_expression > quantile(PCLO_expression, 0.5) ~ 'PCLO_High',
+    PCLO_expression < quantile(PCLO_expression, 0.5) ~ 'PCLO_Low',
+    TRUE ~ NA_character_
+  ))
+
+fittp = survfit(Surv(time, status) ~ group, data = merged_dataPCLO)
+ggsurvplot(fittp, pval = TRUE,risk.table = TRUE)
+
+###
+
+
+DNAH5 = fetch_dense_values(host = gehcc$XenaHosts, 
+                           dataset = gehcc$XenaDatasets, 
+                           identifiers = "DNAH5",
+                           use_probeMap = TRUE) %>% 
+  .[1, ]
+DNAH5
+head(DNAH5)
+#
+merged_dataDNAH5 = tibble(sample = names(DNAH5),
+                          DNAH5_expression = as.numeric(DNAH5)) %>% 
+  left_join(clihcc, by = "sample") %>% 
+  filter(substr(sample, 14, 15) == "01") %>%  # Keep only 'Primary Tumor'
+  select(sample, DNAH5_expression, OS.time, OS) %>% 
+  rename(time = OS.time, 
+         status = OS)
+
+head(merged_dataDNAH5)
+merged_dataDNAH5  
+
+fittp = coxph(Surv(time, status) ~ DNAH5_expression, data = merged_dataDNAH5)
+fittp
+summary(fittp)
+
+merged_dataDNAH5 = merged_dataDNAH5 %>% 
+  mutate(group = case_when(
+    DNAH5_expression > quantile(DNAH5_expression, 0.5) ~ 'DNAH5_High',
+    DNAH5_expression < quantile(DNAH5_expression, 0.5) ~ 'DNAH5_Low',
+    TRUE ~ NA_character_
+  ))
+
+fittp = survfit(Surv(time, status) ~ group, data = merged_dataDNAH5)
+ggsurvplot(fittp, pval = TRUE,risk.table = TRUE)
+
+####
+
+DNAH8 = fetch_dense_values(host = gehcc$XenaHosts, 
+                           dataset = gehcc$XenaDatasets, 
+                           identifiers = "DNAH8",
+                           use_probeMap = TRUE) %>% 
+  .[1, ]
+DNAH8
+head(DNAH8)
+#
+merged_dataDNAH8 = tibble(sample = names(DNAH8),
+                          DNAH8_expression = as.numeric(DNAH8)) %>% 
+  left_join(clihcc, by = "sample") %>% 
+  filter(substr(sample, 14, 15) == "01") %>%  # Keep only 'Primary Tumor'
+  select(sample, DNAH8_expression, OS.time, OS) %>% 
+  rename(time = OS.time, 
+         status = OS)
+
+head(merged_dataDNAH8)
+merged_dataDNAH8  
+
+fittp = coxph(Surv(time, status) ~ DNAH8_expression, data = merged_dataDNAH8)
+fittp
+summary(fittp)
+
+merged_dataDNAH5 = merged_dataDNAH8 %>% 
+  mutate(group = case_when(
+    DNAH8_expression > quantile(DNAH8_expression, 0.5) ~ 'DNAH5_High',
+    DNAH8_expression < quantile(DNAH8_expression, 0.5) ~ 'DNAH5_Low',
+    TRUE ~ NA_character_
+  ))
+
+fittp = survfit(Surv(time, status) ~ group, data = merged_dataDNAH8)
+ggsurvplot(fittp, pval = TRUE,risk.table = TRUE)
+
+
+
+###
+
+
+HERC2P3 = fetch_dense_values(host = gehcc$XenaHosts, 
+                             dataset = gehcc$XenaDatasets, 
+                             identifiers = "HERC2P3",
+                             use_probeMap = TRUE) %>% 
+  .[1, ]
+HERC2P3
+head(HERC2P3)
+#
+merged_dataHERC2P3 = tibble(sample = names(HERC2P3),
+                            HERC2P3_expression = as.numeric(HERC2P3)) %>% 
+  left_join(clihcc, by = "sample") %>% 
+  filter(substr(sample, 14, 15) == "01") %>%  # Keep only 'Primary Tumor'
+  select(sample, HERC2P3_expression, OS.time, OS) %>% 
+  rename(time = OS.time, 
+         status = OS)
+
+head(merged_dataHERC2P3)
+unique(merged_dataHERC2P3$HERC2P3_expression)
+
+fittp = coxph(Surv(time, status) ~ HERC2P3_expression, data = merged_dataHERC2P3)
+fittp
+summary(fittp)
+merged_dataHERC2P3 = merged_dataHERC2P3 %>% 
+    mutate(group = case_when(
+    HERC2P3_expression > quantile(HERC2P3_expression, 0.5) ~ 'HERC2P3_High',
+    HERC2P3_expression < quantile(HERC2P3_expression, 0.5) ~ 'HERC2P3_Low',
+    NaN ~  NA_character_,
+    TRUE ~ NA_character_
+  ))
+
+##
+
+DNAH10 = fetch_dense_values(host = gehcc$XenaHosts, 
+                            dataset = gehcc$XenaDatasets, 
+                            identifiers = "DNAH10",
+                            use_probeMap = TRUE) %>% 
+  .[1, ]
+DNAH10
+head(DNAH10)
+#
+merged_dataDNAH10 = tibble(sample = names(DNAH10),
+                           DNAH10_expression = as.numeric(DNAH10)) %>% 
+  left_join(clihcc, by = "sample") %>% 
+  filter(substr(sample, 14, 15) == "01") %>%  # Keep only 'Primary Tumor'
+  select(sample, DNAH10_expression, OS.time, OS) %>% 
+  rename(time = OS.time, 
+         status = OS)
+
+head(merged_dataDNAH10)
+merged_dataDNAH10  
+
+fittp = coxph(Surv(time, status) ~ DNAH10_expression, data = merged_dataDNAH10)
+fittp
+summary(fittp)
+merged_dataDNAH10 = merged_dataDNAH10 %>% 
+  mutate(group = case_when(
+    DNAH10_expression > quantile(DNAH10_expression, 0.5) ~ 'DNAH10_High',
+    DNAH10_expression < quantile(DNAH10_expression, 0.5) ~ 'DNAH10_Low',
+    TRUE ~ NA_character_
+  ))
+
+fittp = survfit(Surv(time, status) ~ group, data = merged_dataDNAH10)
+ggsurvplot(fittp, pval = TRUE,risk.table = TRUE)
+
+
+#####
+
+DCC = fetch_dense_values(host = gehcc$XenaHosts, 
+                         dataset = gehcc$XenaDatasets, 
+                         identifiers = "DCC",
+                         use_probeMap = TRUE) %>% 
+  .[1, ]
+DCC
+head(DCC)
+#
+merged_dataDCC = tibble(sample = names(DCC),
+                        DCC_expression = as.numeric(DCC)) %>% 
+  left_join(clihcc, by = "sample") %>% 
+  filter(substr(sample, 14, 15) == "01") %>%  # Keep only 'Primary Tumor'
+  select(sample, DCC_expression, OS.time, OS) %>% 
+  rename(time = OS.time, 
+         status = OS)
+
+head(merged_dataDCC)
+merged_dataDCC  
+
+fittp = coxph(Surv(time, status) ~ DCC_expression, data = merged_dataDCC)
+fittp
+summary(fittp)
+merged_dataDCCl = merged_dataDCC %>% 
+  mutate(group = case_when(
+    DCC_expression > quantile(DCC_expression, 0.5) ~ 'DCC_High',
+    DCC_expression < quantile(DCC_expression, 0.25) ~ 'DCC_Low',
+    TRUE ~ NA_character_
+  ))
+
+fittp = survfit(Surv(time, status) ~ group, data = merged_dataDCCl)
+ggsurvplot(fittp, pval = TRUE,risk.table = TRUE)
+
+####
+
+NBEA = fetch_dense_values(host = gehcc$XenaHosts, 
+                          dataset = gehcc$XenaDatasets, 
+                          identifiers = "NBEA",
+                          use_probeMap = TRUE) %>% 
+  .[1, ]
+NBEA
+head(NBEA)
+#
+merged_dataNBEA = tibble(sample = names(NBEA),
+                         NBEA_expression = as.numeric(NBEA)) %>% 
+  left_join(clihcc, by = "sample") %>% 
+  filter(substr(sample, 14, 15) == "01") %>%  # Keep only 'Primary Tumor'
+  select(sample, NBEA_expression, OS.time, OS) %>% 
+  rename(time = OS.time, 
+         status = OS)
+
+head(merged_dataNBEA)
+merged_dataNBEA  
+
+fittp = coxph(Surv(time, status) ~ NBEA_expression, data = merged_dataNBEA)
+fittp
+summary(fittp)
+merged_dataNBEA = merged_dataNBEA %>% 
+  mutate(group = case_when(
+    NBEA_expression > quantile(NBEA_expression, 0.5) ~ 'NBEA_High',
+    NBEA_expression < quantile(NBEA_expression, 0.5) ~ 'NBEA_Low',
+    TRUE ~ NA_character_
+  ))
+
+fittp = survfit(Surv(time, status) ~ group, data = merged_dataNBEA)
+ggsurvplot(fittp, pval = TRUE,risk.table = TRUE)
+
+
+
+
+
+
+## create table csv
+#cscapehcc <- pcawghcc %>%
+#  select(chr,start,reference,alt)
+#write.csv2(expresr2, "rnaexpress.csv")
+#file.choose()
+#jimmypcawgscape <- pcawgcscape %>%
+#  select(Sample, chr, start, end, reference, alt, gene, effect, DNA_VAF,histology_abbreviation, Score, Warning)
+#write.csv2(jimmypcawgscape, "jimmypcawgscape.csv")
+
