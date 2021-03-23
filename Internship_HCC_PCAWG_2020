@@ -1,0 +1,763 @@
+#### PCAWG ###
+file.choose()
+setwd("/Users/josesaenz/Documents/InternshipTMR/R/PCAWG")
+
+## Install packages
+
+#install.packages("readxl")
+#install.packages("survminer")
+#install.packages("survival")
+#install.packages("tidyverse")
+#install.packages("UCSCXenaTools")
+#install.packages("dplyr")
+#install.packages("data.table")
+
+## Load packages
+
+library(survminer)
+library(survival)
+library(tidyverse)
+library(UCSCXenaTools)
+library(dplyr)
+library(readxl)
+library(data.table)
+library(ggplot2)
+
+## Describe PCAWG datasets 
+
+xepcawg = XenaGenerate(subset = XenaHostNames == "pcawgHub")
+hosts(xepcawg)
+cohorts(xepcawg)
+datasets(xepcawg)
+
+### Review and download datasets ###
+
+## Scan datasets for specimen centric - simple somatic mutation (SNVs and indels) - consensus coding mutations
+xepcawg1 = XenaData %>%
+  filter(XenaHostNames == "pcawgHub") %>%
+  XenaScan("snv_mnv_indel.maf.coding.xena")
+xepcawg1
+## Download the dataset for specimen centric - simple somatic mutation (SNVs and indels) - consensus coding mutations
+somaticm = xepcawg1 %>% 
+  filter(DataSubtype == "simple somatic mutation (SNVs and indels)") %>%  # select somatic mutations type of data
+  XenaGenerate() %>%  # generate a XenaHub object
+  XenaQuery() %>% 
+  XenaDownload()
+somaticm
+## Specify which exact dataset table we want to work with and get the working table
+somaticmut = XenaPrepare(somaticm)
+somaticmut = somaticmut$October_2016_all_patients_2778.snv_mnv_indel.maf.coding.xena.gz
+somaticmut
+
+## Scan datasets for simple somatic mutation (SNVs and indels) - coding driver mutations
+xepcawg2 = XenaData %>%
+  filter(XenaHostNames == "pcawgHub") %>%
+  XenaScan("pcawg_whitelist_coding_drivers_v1_sep302016.sp.xena")
+xepcawg2
+## Download the dataset for specimen centric - simple somatic mutation (SNVs and indels) - coding driver mutations
+somaticmxx = xepcawg2 %>% 
+  filter(DataSubtype == "simple somatic mutation (SNVs and indels)") %>%
+  XenaGenerate() %>%
+  XenaQuery() %>% 
+  XenaDownload()
+somaticmxx
+## Get the working table
+somaticmut2 =XenaPrepare(somaticmxx)
+somaticmut2
+
+## Scan datasets phenotype - overall survival
+xepcawg3 = XenaData %>%
+  filter(XenaHostNames == "pcawgHub") %>%
+  XenaScan("survival")
+xepcawg3
+## Download the dataset we want - OS
+oversur = xepcawg3 %>% 
+  filter(DataSubtype == "phenotype") %>%  # select OS
+  XenaGenerate() %>%  
+  XenaQuery() %>% 
+  XenaDownload()
+oversur
+## Specify which exact dataset table we want to work with and get the working table
+oversur2 =XenaPrepare(oversur)
+oversur2a =oversur2$survival_sp
+oversur2a %>% 
+  rename(sample=xena_sample)->oversur2ar
+
+
+
+#########
+
+xepcawg3 = XenaData %>%
+  filter(XenaHostNames == "pcawgHub") %>%
+  XenaScan("survival")
+xepcawg3
+## Download the dataset we want - OS
+oversur = xepcawg3 %>% 
+  filter(DataSubtype == "phenotype") %>%  # select OS
+  XenaGenerate() %>%  
+  XenaQuery() %>% 
+  XenaDownload()
+oversur
+## Specify which exact dataset table we want to work with and get the working table
+oversur2 =XenaPrepare(oversur)
+oversur2a =oversur2$survival_sp
+oversur2a
+oversur2donor =oversur2$survival_donor
+oversur2donor
+
+## Scan datasets phenotype - tumour histology
+xepcawg5 = XenaData %>%
+  filter(XenaHostNames == "pcawgHub") %>%
+  XenaScan("specimen_histology")
+xepcawg5
+## Download the dataset phenotype - tumour histology
+tumorh = xepcawg5 %>% 
+  filter(DataSubtype == "phenotype") %>%  # select tumor histology
+  XenaGenerate() %>%  # generate a XenaHub object
+  XenaQuery() %>% 
+  XenaDownload()
+tumorh
+## Specify which exact dataset table we want to work with and get the working table
+tumorh2 =XenaPrepare(tumorh)
+tumorh2
+tumorh2donor =tumorh2$pcawg_specimen_histology_August2016_v9_donor
+tumorh2donor
+
+tumorh2donor =tumorh2$pcawg_specimen_histology_August2016_v9_donor
+tumorh2donor %>% 
+  rename(icgc_donor_id=icgc_specimen_id)->tmoor
+
+oversur2donor %>% 
+  left_join(tmoor, by ="icgc_donor_id") -> aaa2
+aaa2 %>% 
+  filter(histology_abbreviation=="Liver-HCC") -> COUNTHCC
+#CORREGIR DATABASE 325 PACIENTES NO MÁS
+
+## Scan datasets phenotype - overall survival
+xepcawg3donor = XenaData %>%
+  filter(XenaHostNames == "pcawgHub") %>%
+  XenaScan("pcawg_donor_clinical_August2016_v9")
+xepcawg3donor
+## Download the dataset we want - OS
+oversurd = xepcawg3donor %>% 
+  filter(DataSubtype == "phenotype") %>%  # select OS
+  XenaGenerate() %>%  
+  XenaQuery() %>% 
+  XenaDownload()
+oversurd
+## Specify which exact dataset table we want to work with and get the working table
+oversur2d =XenaPrepare(oversurd)
+clinicald =oversur2d$pcawg_donor_clinical_August2016_v9
+clinicald
+
+COUNTHCC %>% 
+  left_join(clinicald, by ="icgc_donor_id") -> counthcc1
+
+counthcc1 %>% 
+mutate("status"= ifelse(donor_vital_status.x == "alive", 0,
+                      ifelse(donor_vital_status.x == "deceased", 1,"no"))) -> cnthcc
+cnthcc[,31]<- sapply(cnthcc[,31],as.numeric)
+
+
+survobj = Surv(cnthcc$donor_survival_time.x, cnthcc$tumor_stage)
+fitcsex = coxph(Surv(donor_survival_time.x,status) ~ tumor_stage,data=cnthcc)
+summary(fitcsex)
+fitcsexg = survfit(Surv(donor_survival_time.x,status) ~ tumor_stage,data=cnthcc)
+ggsurvplot(fitcsexg, pval = TRUE,risk.table = TRUE)
+
+fitcst = coxph(Surv(donor_survival_time.x,status) ~ tumour_stage,data=cnthcc)
+summary(fitcst)
+fitcstg = survfit(Surv(donor_survival_time.x,status) ~ tumour_stage,data=cnthcc)
+ggsurvplot(fitcstg, pval = TRUE,risk.table = TRUE)
+########
+
+
+## Scan datasets phenotype - specimen type
+xepcawg4 = XenaData %>%
+  filter(XenaHostNames == "pcawgHub") %>%
+  XenaScan("specimen_type")
+xepcawg4
+## Download phenotype - specimen type
+spetype = xepcawg4 %>% 
+  filter(DataSubtype == "phenotype") %>%  # select ST
+  XenaGenerate() %>%  
+  XenaQuery() %>% 
+  XenaDownload()
+spetype
+## Get the working table
+spetype2 =XenaPrepare(spetype)
+spetype2
+
+## Scan datasets phenotype - tumour histology
+xepcawg5 = XenaData %>%
+  filter(XenaHostNames == "pcawgHub") %>%
+  XenaScan("specimen_histology")
+xepcawg5
+## Download the dataset phenotype - tumour histology
+tumorh = xepcawg5 %>% 
+  filter(DataSubtype == "phenotype") %>%  # select tumor histology
+  XenaGenerate() %>%  # generate a XenaHub object
+  XenaQuery() %>% 
+  XenaDownload()
+tumorh
+## Specify which exact dataset table we want to work with and get the working table
+tumorh2 =XenaPrepare(tumorh)
+tumorh2
+tumorh2a =tumorh2$pcawg_specimen_histology_August2016_v9
+tumorh2a
+
+## Scan datasets gene expression RNAseq - normalized 
+xepcawg6 = XenaData %>%
+  filter(XenaHostNames == "pcawgHub") %>%
+  XenaScan("tophat_star_fpkm_uq.v2_aliquot_gl.donor.log")
+xepcawg6
+## Download the dataset gene expression RNAseq - normalized 
+expresr = xepcawg6 %>% 
+  filter(DataSubtype == "gene expression RNAseq") %>%  # select somatic mutations
+  XenaGenerate() %>%
+  XenaQuery() %>% 
+  XenaDownload()
+expresr
+## Specify which exact dataset table we want to work with and get the working table
+expresr2 =XenaPrepare(expresr)
+expresr2
+
+### Review all tables downloaded for specimen centric data ###
+
+## Simple somatic mutation (SNVs and indels) - consensus coding mutations
+View(somaticmut)
+## Simple somatic mutation (SNVs and indels) - coding driver mutations
+View(somaticmut2)
+## Phenotype - overall survival
+View(oversur2a)
+## Phenotype - specimen type
+View(spetype2)
+## Phenotype - tumour histology
+View(tumorh2a)
+## Gene expression RNAseq - normalized 
+View(expresr2)
+
+### Tables transformation and organization
+
+#getwd()
+#file.choose()
+#setwd()
+#read_excel("mmm.xlsx")
+#unique(table$columnname)
+
+spetype2 %>% 
+  rename(Sample = icgc_specimen_id) -> spetype2merge
+somaticmut %>% 
+  left_join(spetype2merge, by = "Sample") -> somaticmut2merge
+View(somaticmut2merge)
+
+tumorh2a %>% 
+  rename(Sample = icgc_specimen_id) -> tumorh2merge
+tumorh2merge %>%
+  select(Sample,histology_abbreviation) -> tumorhist
+somaticmut2merge %>% 
+  left_join(tumorhist, by = "Sample") -> somaticmut3merge
+View(somaticmut3merge)
+
+## PCAWG HHC target group
+somaticmut3merge %>% 
+  filter (histology_abbreviation == "Liver-HCC") -> pcawghcc 
+View(pcawghcc) #33378 mutations
+
+#test code
+#oversur2a %>% 
+#  rename(icgc_specimen_id=xena_sample) -> cohcc
+#countpatienthcc %>% 
+#  left_join(tumorh2a, by ="icgc_specimen_id") -> cohcc
+#cohcc %>% 
+#  filter(histology_abbreviation=="Liver-HCC") -> zzz
+
+# unique(pcawghcc$dcc_specimen_type)
+
+#############
+PCAWG_cscape1 <- read.csv(file = 'jimmypcawgscape.csv', header = TRUE, sep=";")
+PCAWG_cscape <- PCAWG_cscape1[,-c(1)]
+
+#### Filter out oncogenic mutations and mutation duplicates in same patients
+PCAWG_onco <- PCAWG_cscape[grepl("oncogenic", PCAWG_cscape$Warning),]
+PCAWG_onco2 <- PCAWG_onco[!duplicated(PCAWG_onco[,1:6]),]
+
+#### Order by each patient (just to see the patient with more gene mutations)
+SplitByPatient <- PCAWG_onco2 %>% group_split(Sample)
+SplitByPatient2 <- SplitByPatient[order(sapply(SplitByPatient,nrow),decreasing=T)]
+
+#### Order by genes
+SplitByGene <- PCAWG_onco2 %>% split(.$gene)
+SplitByGene2 <- SplitByGene[order(sapply(SplitByGene,nrow),decreasing = T)]
+OrdGenes <- do.call(rbind, SplitByGene2)
+
+#### Create a DF of only oncogenic genes present in over 15 patients
+Genes15 <- setDT(OrdGenes)[, .SD[.N >15], gene]
+View(Genes15)
+#############
+
+## Create different table for each gene that is biology significant
+
+genes15 <- Genes15 %>% select(chr,start,end,reference,alt,gene)
+View(genes15)
+write.csv2(Genes15, "pcawggenes20.csv")
+
+# arid2 -n1
+genes15 %>%
+  filter(gene == "ARID2") -> arid2
+View(arid2)
+arid2 %>% 
+  unite("aridmx", sep="_",chr:gene,remove = FALSE) -> aridmerge
+aridmerge %>% pull(aridmx)-> arid2com
+
+# col11a1 -n2
+genes15 %>%
+  filter(gene == "COL11A1") -> col11a1
+View(col11a1)
+col11a1 %>% 
+  unite("col11a1mx", sep="_",chr:gene,remove = FALSE) -> col11a1merge
+col11a1merge %>% pull(col11a1mx)-> col11a1com
+
+# csmd1 -n3
+genes15 %>%
+  filter(gene == "CSMD1") -> csmd1
+View(csmd1)
+csmd1 %>% 
+  unite("csmd1mx", sep="_",chr:gene,remove = FALSE) -> csmd1merge
+csmd1merge %>% pull(csmd1mx)-> csmd1com
+
+# csmd3 -n4
+genes15 %>%
+  filter(gene == "CSMD3") -> csmd3
+View(csmd3)
+csmd3 %>% 
+  unite("csmd3mx", sep="_",chr:gene,remove = FALSE) -> csmd3merge
+csmd3merge %>% pull(csmd3mx)-> csmd3com
+
+# ctnnb1 -n5
+genes15 %>%
+  filter(gene == "CTNNB1") -> ctnnb1
+View(ctnnb1)
+ctnnb1 %>% 
+  unite("ctnnb1mx", sep="_",chr:gene,remove = FALSE) -> ctnnb1merge
+ctnnb1merge %>% pull(ctnnb1mx)-> ctnnb1com
+
+# dcc -n6
+genes15 %>%
+  filter(gene == "DCC") -> dcc
+View(dcc)
+dcc %>% 
+  unite("dccmx", sep="_",chr:gene,remove = FALSE) -> dccmerge
+dccmerge %>% pull(dccmx)-> dcccom
+
+# dnah7 -n7
+genes15 %>%
+  filter(gene == "DNAH7") -> dnah7
+View(dnah7)
+dnah7 %>% 
+  unite("dnah7mx", sep="_",chr:gene,remove = FALSE) -> dnah7merge
+dnah7merge %>% pull(dnah7mx)-> dnah7com
+
+# dst -n8
+genes15 %>%
+  filter(gene == "DST") -> dst
+View(dst)
+dst %>% 
+  unite("dstmx", sep="_",chr:gene,remove = FALSE) -> dstmerge
+dstmerge %>% pull(dstmx)-> dstcom
+
+# fbn2 -n9
+genes15 %>%
+  filter(gene == "FBN2") -> fbn2
+View(fbn2)
+fbn2 %>% 
+  unite("fbnmx", sep="_",chr:gene,remove = FALSE) -> fbnmerge
+fbnmerge %>% pull(fbnmx)-> fbn2com
+
+# gpr98 -n10
+genes15 %>%
+  filter(gene == "GPR98") -> gpr98
+View(gpr98)
+gpr98 %>% 
+  unite("gprmx", sep="_",chr:gene,remove = FALSE) -> gprmerge
+gprmerge %>% pull(gprmx)-> gpr98com
+
+# herc1 -n11
+genes15 %>%
+  filter(gene == "HERC1") -> herc1
+View(herc1)
+herc1 %>% 
+  unite("hercmx", sep="_",chr:gene,remove = FALSE) -> hercmerge
+hercmerge %>% pull(hercmx)-> herc1com
+
+# hmcn1 -n12
+genes15 %>%
+  filter(gene == "HMCN1") -> hmcn1
+View(hmcn1)
+hmcn1 %>% 
+  unite("hmcn1mx", sep="_",chr:gene,remove = FALSE) -> hmcn1merge
+hmcn1merge %>% pull(hmcn1mx)-> hmcn1com
+
+# lrp1b -n13
+genes15 %>%
+  filter(gene == "LRP1B") -> lrp1b
+View(lrp1b)
+lrp1b %>% 
+  unite("lrpmx", sep="_",chr:gene,remove = FALSE) -> lrpmerge
+lrpmerge %>% pull(lrpmx)-> lrp1bcom
+
+# muc16 -n14
+genes15 %>%
+  filter(gene == "MUC16") -> muc16
+View(muc16)
+muc16 %>% 
+  unite("mucmx", sep="_",chr:gene,remove = FALSE) -> mucmerge
+mucmerge %>% pull(mucmx)-> muc16com
+
+# nbea -n15
+genes15 %>%
+  filter(gene == "NBEA") -> nbea
+View(nbea)
+nbea %>% 
+  unite("nbeamx", sep="_",chr:gene,remove = FALSE) -> nbeamerge
+nbeamerge %>% pull(nbeamx)-> nbeacom
+
+# pclo -n16
+genes15 %>%
+  filter(gene == "PCLO") -> pclo
+View(pclo)
+pclo %>% 
+  unite("pclomx", sep="_",chr:gene,remove = FALSE) -> pclomerge
+pclomerge %>% pull(pclomx)-> pclocom
+
+# ryr2 -n17
+genes15 %>%
+  filter(gene == "RYR2") -> ryr2
+View(ryr2)
+ryr2 %>% 
+  unite("ryrmx", sep="_",chr:gene,remove = FALSE) -> ryrmerge
+ryrmerge %>% pull(ryrmx)-> ryr2com
+
+# tp53 -n18
+genes15 %>%
+  filter(gene == "TP53") -> tp53
+View(tp53)
+tp53 %>% 
+  unite("tp53mx", sep="_",chr:gene,remove = FALSE) -> tpmerge
+tpmerge %>% pull(tp53mx)-> tp53com
+
+# ttn -n19
+genes15 %>%
+  filter(gene == "TTN") -> ttn
+View(ttn)
+ttn %>% 
+  unite("ttnmx", sep="_",chr:gene,remove = FALSE) -> ttnmerge
+ttnmerge %>% pull(ttnmx)-> ttncom
+
+# ush2a -n20
+genes15 %>%
+  filter(gene == "USH2A") -> ush2a
+View(ush2a)
+ush2a %>% 
+  unite("ush2amx", sep="_",chr:gene,remove = FALSE) -> ush2amerge
+ush2amerge %>% pull(ush2amx)-> ush2acom
+
+## Create main comparison merge column 
+pcawghcc %>% 
+  unite("indexmerge", sep="_", chr:gene,remove = FALSE) -> pcawghccind
+pcawghccind %>% 
+  pull(indexmerge) -> referencelook 
+
+## Index creation for 20 gene
+referencelook %in% arid2com -> arid2ind
+referencelook %in% col11a1com -> col11a1ind
+referencelook %in% csmd1com -> csmd1ind
+referencelook %in% csmd3com -> csmd3ind
+referencelook %in% ctnnb1com -> ctnnb1ind
+referencelook %in% dcccom -> dccind
+referencelook %in% dnah7com -> dnah7ind
+referencelook %in% dstcom -> dstind
+referencelook %in% fbn2com -> fbn2ind
+referencelook %in% gpr98com -> gpr98ind
+referencelook %in% herc1com -> herc1ind
+referencelook %in% hmcn1com -> hmcn1ind
+referencelook %in% lrp1bcom -> lrp1bind
+referencelook %in% muc16com -> muc16ind
+referencelook %in% nbeacom -> nbeaind
+referencelook %in% pclocom -> pcloind
+referencelook %in% ryr2com -> ryr2ind
+referencelook %in% tp53com -> tp53ind
+referencelook %in% ttncom -> ttnind
+referencelook %in% ush2acom-> ush2aind
+
+pcawghccind %>%
+  mutate(arid2ind) %>% 
+  mutate(col11a1ind) %>% 
+  mutate(csmd1ind) %>%
+  mutate(csmd3ind) %>% 
+  mutate(ctnnb1ind) %>%
+  mutate(dccind) %>%
+  mutate(dnah7ind) %>%
+  mutate(dstind) %>%
+  mutate(fbn2ind) %>%
+  mutate(gpr98ind) %>%
+  mutate(herc1ind) %>%
+  mutate(hmcn1ind) %>%
+  mutate(lrp1bind) %>%
+  mutate(muc16ind) %>%
+  mutate(nbeaind) %>%
+  mutate(pcloind) %>%
+  mutate(ryr2ind) %>%
+  mutate(tp53ind) %>%
+  mutate(ttnind) %>%
+  mutate(ush2aind) -> pcawghccmatrix
+
+# We get the dataset ready for the OS analysis 
+
+oversur2a %>% 
+  rename(Sample=xena_sample) -> oxx 
+pcawghccmatrix %>% 
+  left_join(oxx, by = "Sample") -> os_pcawg
+os_pcawgsta = os_pcawg %>% 
+  rename(time=donor_survival_time) %>% 
+  mutate(status= ifelse(donor_vital_status == "alive", 1,
+                  ifelse(donor_vital_status == "deceased", 0,"no")))
+os_pcawgsta[,40]<- sapply(os_pcawgsta[,40],as.numeric)
+
+# OS analysis
+
+os_pcawgarid=os_pcawgsta %>% 
+  unite("arid2p", sep="_",Sample,arid2ind,remove = FALSE) 
+os_pcawg1 <- os_pcawgarid[!duplicated(os_pcawgarid[,1]),]
+fitarid = coxph(Surv(time,status)~arid2ind,data=os_pcawg1)
+summary(fitarid)
+fitaridg = survfit(Surv(time, status) ~ arid2ind, data = os_pcawg1)
+ggsurvplot(fitaridg, pval = TRUE, xlab="Time in days",
+           risk.table = TRUE)
+
+os_pcawgcol=os_pcawgsta %>% 
+  unite("coll11a1p", sep="_",Sample,col11a1ind,remove = FALSE) 
+os_pcawg2 <- os_pcawgcol[!duplicated(os_pcawgcol[,1]),]
+fitcol = coxph(Surv(time,status)~col11a1ind,data=os_pcawg2)
+summary(fitcol)
+fitcolg = survfit(Surv(time, status) ~ col11a1ind, data = os_pcawg2)
+ggsurvplot(fitcolg, pval = TRUE,risk.table = TRUE)
+           
+os_pcawgcsmd1=os_pcawgsta %>% 
+  unite("csmd1p", sep="_",Sample,csmd1ind,remove = FALSE) 
+os_pcawg3 <- os_pcawgcsmd1[!duplicated(os_pcawgcsmd1[,1]),]
+fitc3 = coxph(Surv(time,status)~csmd1ind,data=os_pcawg3)
+summary(fitc3)
+fitc3g = survfit(Surv(time, status) ~ csmd1ind, data = os_pcawg3)
+ggsurvplot(fitc3g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgcsmd1=os_pcawgsta %>% 
+  unite("csmd1p", sep="_",Sample,csmd1ind,remove = FALSE) 
+os_pcawg3 <- os_pcawgcsmd1[!duplicated(os_pcawgcsmd1[,1]),]
+fitc3 = coxph(Surv(time,status)~csmd1ind,data=os_pcawg3)
+summary(fitc3)
+fitc3g = survfit(Surv(time, status) ~ csmd1ind, data = os_pcawg3)
+ggsurvplot(fitc3g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgcsmd3=os_pcawgsta %>% 
+  unite("csmd3p", sep="_",Sample,csmd3ind,remove = FALSE) 
+os_pcawg4 <- os_pcawgcsmd3[!duplicated(os_pcawgcsmd3[,1]),]
+fitc4 = coxph(Surv(time,status)~csmd3ind,data=os_pcawg4)
+summary(fitc4)
+fitc4g = survfit(Surv(time, status) ~ csmd3ind, data = os_pcawg4)
+ggsurvplot(fitc4g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgctnnb1=os_pcawgsta %>% 
+  unite("ctnnb1p", sep="_",Sample,ctnnb1ind,remove = FALSE) 
+os_pcawg5 <- os_pcawgctnnb1[!duplicated(os_pcawgctnnb1[,1]),]
+fitc5 = coxph(Surv(time,status)~ctnnb1ind,data=os_pcawg5)
+summary(fitc5)
+fitc5g = survfit(Surv(time, status) ~ ctnnb1ind, data = os_pcawg5)
+ggsurvplot(fitc5g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgdcc=os_pcawgsta %>% 
+  unite("dccp", sep="_",Sample,dccind,remove = FALSE) 
+os_pcawg6 <- os_pcawgdcc[!duplicated(os_pcawgdcc[,1]),]
+fitc6 = coxph(Surv(time,status)~dccind,data=os_pcawg6)
+summary(fitc6)
+fitc6g = survfit(Surv(time, status) ~ dccind, data = os_pcawg6)
+ggsurvplot(fitc6g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgdnah7=os_pcawgsta %>% 
+  unite("dnah7p", sep="_",Sample,dnah7ind,remove = FALSE) 
+os_pcawg7 <- os_pcawgdnah7[!duplicated(os_pcawgdnah7[,1]),]
+fitc7 = coxph(Surv(time,status)~dnah7ind,data=os_pcawg7)
+summary(fitc7)
+fitc7g = survfit(Surv(time, status) ~ dnah7ind, data = os_pcawg7)
+ggsurvplot(fitc7g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgdst=os_pcawgsta %>% 
+  unite("dstp", sep="_",Sample,dstind,remove = FALSE) 
+os_pcawg8 <- os_pcawgdst[!duplicated(os_pcawgdst[,1]),]
+fitc8 = coxph(Surv(time,status)~dstind,data=os_pcawg8)
+summary(fitc8)
+fitc8g = survfit(Surv(time, status) ~ dstind, data = os_pcawg8)
+ggsurvplot(fitc8g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgfbn2=os_pcawgsta %>% 
+  unite("fbn2p", sep="_",Sample,fbn2ind,remove = FALSE) 
+os_pcawg9 <- os_pcawgfbn2[!duplicated(os_pcawgfbn2[,1]),]
+fitc9 = coxph(Surv(time,status)~fbn2ind,data=os_pcawg9)
+summary(fitc9)
+fitc9g = survfit(Surv(time, status) ~ fbn2ind, data = os_pcawg9)
+ggsurvplot(fitc9g, pval = TRUE,risk.table = TRUE)
+
+os_pcawggpr98=os_pcawgsta %>% 
+  unite("gpr98p", sep="_",Sample,gpr98ind,remove = FALSE) 
+os_pcawg10 <- os_pcawggpr98[!duplicated(os_pcawggpr98[,1]),]
+fitc10 = coxph(Surv(time,status)~gpr98ind,data=os_pcawg10)
+summary(fitc10)
+fitc10g = survfit(Surv(time, status) ~ gpr98ind, data = os_pcawg10)
+ggsurvplot(fitc10g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgherc1=os_pcawgsta %>% 
+  unite("herc1p", sep="_",Sample,herc1ind,remove = FALSE) 
+os_pcawg11 <- os_pcawgherc1[!duplicated(os_pcawgherc1[,1]),]
+fitc11 = coxph(Surv(time,status)~herc1ind,data=os_pcawg11)
+summary(fitc11)
+fitc11g = survfit(Surv(time, status) ~ herc1ind, data = os_pcawg11)
+ggsurvplot(fitc11g, pval = TRUE,risk.table = TRUE)
+
+os_pcawghmcn1=os_pcawgsta %>% 
+  unite("hmcn1p", sep="_",Sample,hmcn1ind,remove = FALSE) 
+os_pcawg12 <- os_pcawghmcn1[!duplicated(os_pcawghmcn1[,1]),]
+fitc12 = coxph(Surv(time,status)~hmcn1ind,data=os_pcawg12)
+summary(fitc12)
+fitc12g = survfit(Surv(time, status) ~ hmcn1ind, data = os_pcawg12)
+ggsurvplot(fitc12g, pval = TRUE,risk.table = TRUE)
+
+os_pcawglrp1b=os_pcawgsta %>% 
+  unite("lrp1bp", sep="_",Sample,lrp1bind,remove = FALSE) 
+os_pcawg13 <- os_pcawglrp1b[!duplicated(os_pcawglrp1b[,1]),]
+fitc13 = coxph(Surv(time,status)~lrp1bind,data=os_pcawg13)
+summary(fitc13)
+fitc13g = survfit(Surv(time, status) ~ lrp1bind, data = os_pcawg13)
+ggsurvplot(fitc13g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgmuc16=os_pcawgsta %>% 
+  unite("muc16p", sep="_",Sample,muc16ind,remove = FALSE) 
+os_pcawg14 <- os_pcawgmuc16[!duplicated(os_pcawgmuc16[,1]),]
+fitc14 = coxph(Surv(time,status)~muc16ind,data=os_pcawg14)
+summary(fitc14)
+fitc14g = survfit(Surv(time, status) ~ muc16ind, data = os_pcawg14)
+ggsurvplot(fitc14g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgnbea=os_pcawgsta %>% 
+  unite("nbeap", sep="_",Sample,nbeaind,remove = FALSE) 
+os_pcawg15 <- os_pcawgnbea[!duplicated(os_pcawgnbea[,1]),]
+fitc15 = coxph(Surv(time,status) ~ nbeaind,data=os_pcawg15)
+summary(fitc15)
+fitc15g = survfit(Surv(time, status) ~ nbeaind, data = os_pcawg15)
+ggsurvplot(fitc15g, pval = TRUE, risk.table = TRUE, xlab="Time in days")
+
+os_pcawgpclo=os_pcawgsta %>% 
+  unite("pclop", sep="_",Sample,pcloind,remove = FALSE) 
+os_pcawg16 <- os_pcawgpclo[!duplicated(os_pcawgpclo[,1]),]
+fitc16 = coxph(Surv(time,status) ~ pcloind,data=os_pcawg16)
+summary(fitc16)
+fitc16g = survfit(Surv(time, status) ~ pcloind, data = os_pcawg16)
+ggsurvplot(fitc16g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgryr2=os_pcawgsta %>% 
+  unite("ryr2p", sep="_",Sample,ryr2ind,remove = FALSE) 
+os_pcawg17 <- os_pcawgryr2[!duplicated(os_pcawgryr2[,1]),]
+fitc17 = coxph(Surv(time,status) ~ ryr2ind,data=os_pcawg17)
+summary(fitc17)
+fitc17g = survfit(Surv(time, status) ~ ryr2ind, data = os_pcawg17)
+ggsurvplot(fitc17g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgtp53=os_pcawgsta %>% 
+  unite("tp53p", sep="_",Sample,tp53ind,remove = FALSE) 
+os_pcawg18 <- os_pcawgtp53[!duplicated(os_pcawgtp53[,1]),]
+fitc18 = coxph(Surv(time,status) ~ tp53ind,data=os_pcawg18)
+summary(fitc18)
+fitc18g = survfit(Surv(time, status) ~ tp53ind, data = os_pcawg18)
+ggsurvplot(fitc18g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgttn=os_pcawgsta %>% 
+  unite("ttnp", sep="_",Sample,ttnind,remove = FALSE) 
+os_pcawg19 <- os_pcawgttn[!duplicated(os_pcawgttn[,1]),]
+fitc19 = coxph(Surv(time,status) ~ ttnind,data=os_pcawg19)
+summary(fitc19)
+fitc19g = survfit(Surv(time, status) ~ ttnind, data = os_pcawg19)
+ggsurvplot(fitc19g, pval = TRUE,risk.table = TRUE)
+
+os_pcawgush2a=os_pcawgsta %>% 
+  unite("ush2ap", sep="_",Sample,ush2aind,remove = FALSE) 
+os_pcawg20 <- os_pcawgush2a[!duplicated(os_pcawgush2a[,1]),]
+fitc20 = coxph(Surv(time,status) ~ ush2aind,data=os_pcawg20)
+summary(fitc20)
+fitc20g = survfit(Surv(time, status) ~ ush2aind, data = os_pcawg20)
+ggsurvplot(fitc20g, pval = TRUE,risk.table = TRUE)
+
+#################
+### rna #######
+###############
+getwd()
+setwd("/Users/josesaenz/Documents/InternshipTMR/R")
+
+expresr2 %>% 
+  filter(sample=="ENSG00000134516.11") -> dock2rna
+expresr2 %>% 
+  filter(sample=="ENSG00000172915.14") -> nbearna
+expresr2 %>% 
+  filter(sample=="ENSG00000168702.12") -> lrp1brna
+write_csv2(lrp1brna, "lrp1brna.csv")
+write_csv2(nbearna, "nbearna.csv")
+write_csv2(dock2rna, "dock2rna.csv")
+
+cnthcc %>% 
+  select(icgc_donor_id, status, donor_survival_time.x) ->rnatimest
+p=read_excel("rnapcawg3g.xlsx")
+
+rnatimest %>% 
+  left_join(p, by="icgc_donor_id") -> anarna
+
+unique(anarna$donor_survival_time.x)
+
+fitdock2 = coxph(Surv(donor_survival_time.x,status) ~ dock2,data=anarna)
+summary(fitdock2)
+
+fitnbea = coxph(Surv(donor_survival_time.x,status) ~ nbea,data=anarna)
+summary(fitnbea)
+
+fitlr = coxph(Surv(donor_survival_time.x,status) ~ lrp1b,data=anarna)
+summary(fitlr)
+
+
+anarna = anarna %>% 
+  mutate(group = case_when(
+    dock2 > quantile(dock2, 0.5) ~ 'NBEA_High',
+    dock2 < quantile(dock2, 0.5) ~ 'NBEA_Low',
+    TRUE ~ NA_character_
+  ))
+
+fittp = survfit(Surv(donor_survival_time.x,status) ~ group, data = anarna)
+ggsurvplot(fittp, pval = TRUE,risk.table = TRUE)
+
+
+
+fitcsexg = survfit(Surv(donor_survival_time.x,status) ~ tumor_stage,data=anarna)
+ggsurvplot(fitcsexg, pval = TRUE,risk.table = TRUE)
+
+fitcst = coxph(Surv(donor_survival_time.x,status) ~ tumour_stage,data=cnthcc)
+summary(fitcst)
+fitcstg = survfit(Surv(donor_survival_time.x,status) ~ tumour_stage,data=cnthcc)
+ggsurvplot(fitcstg, pval = TRUE,risk.table = TRUE)
+
+
+## create table csv
+cscapehcc <- pcawghcc %>%
+  select(chr,start,reference,alt)
+write.csv2(cscapehcc, "table_car.csv")
+file.choose()
+jimmypcawgscape <- pcawgcscape %>%
+  select(Sample, chr, start, end, reference, alt, gene, effect, DNA_VAF,histology_abbreviation, Score, Warning)
+write.csv2(jimmypcawgscape, "jimmypcawgscape.csv")
+
+
